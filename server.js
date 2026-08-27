@@ -1,35 +1,9 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const https = require("https");
 const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 10000;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-
-function telegram(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-
-  const data = new URLSearchParams({
-    chat_id: TELEGRAM_CHAT_ID,
-    text: message
-  }).toString();
-
-  const req = https.request({
-    hostname: "api.telegram.org",
-    path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Content-Length": Buffer.byteLength(data)
-    }
-  });
-
-  req.on("error", () => {});
-  req.write(data);
-  req.end();
-}
 
 function send(ws, message) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -38,7 +12,10 @@ function send(ws, message) {
 }
 
 function makeId() {
-  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+  return (
+    Math.random().toString(36).slice(2, 8) +
+    Date.now().toString(36).slice(-4)
+  );
 }
 
 const server = http.createServer((req, res) => {
@@ -50,7 +27,11 @@ const server = http.createServer((req, res) => {
     "/viewer.html": "viewer.html"
   };
 
-  const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+  const pathname = new URL(
+    req.url,
+    `http://${req.headers.host || "localhost"}`
+  ).pathname;
+
   const file = routes[pathname];
 
   if (!file) {
@@ -58,130 +39,200 @@ const server = http.createServer((req, res) => {
     return res.end("Not found");
   }
 
-  if (pathname === "/camera" || pathname === "/camera.html") {
-    telegram("🔔 Someone opened the camera page.\nCamera permission is still required.");
-  }
-
   fs.readFile(path.join(__dirname, file), (err, data) => {
     if (err) {
       res.writeHead(500);
       return res.end("Server error");
     }
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8"
+    });
+
     res.end(data);
   });
 });
 
 const wss = new WebSocket.Server({ server });
 
-const cameras = new Map(); // cameraId -> websocket
-const viewers = new Map(); // viewerId -> websocket
+let cameraSocket = null;
+let cameraId = null;
+
+const viewers = new Map();
 
 wss.on("connection", (ws, req) => {
-  const pathname = new URL(req.url, "http://localhost").pathname;
-  const role = pathname === "/camera" ? "camera" : "viewer";
+  const pathname = new URL(
+    req.url,
+    "http://localhost"
+  ).pathname;
 
-  if (role === "camera") {
-    const cameraId = makeId();
-    cameras.set(cameraId, ws);
+  /*
+   * CAMERA
+   */
+  if (pathname === "/camera") {
+    cameraId = makeId();
+    cameraSocket = ws;
 
-    send(ws, { type: "role", role: "camera", cameraId });
+    send(ws, {
+      type: "role",
+      role: "camera",
+      cameraId
+    });
 
     for (const viewer of viewers.values()) {
-      send(viewer, {
+      send(viewer.ws, {
         type: "camera-online",
         cameraId
       });
     }
 
-    telegram(`📷 Camera page connected.\nCamera ID: ${cameraId}\nThe user must still allow camera access.`);
-
     ws.on("message", raw => {
       let msg;
+
       try {
         msg = JSON.parse(raw.toString());
       } catch {
         return;
       }
 
+      /*
+       * Camera tells viewers that both streams
+       * are available.
+       */
       if (msg.type === "camera-live") {
-        telegram(`🟢 Camera permission was granted.\nCamera ID: ${cameraId}`);
         for (const viewer of viewers.values()) {
-          send(viewer, { type: "camera-live", cameraId });
+          send(viewer.ws, {
+            type: "camera-live",
+            cameraId
+          });
         }
+
         return;
       }
 
+      /*
+       * Forward WebRTC messages from camera
+       * to the correct viewer.
+       */
       if (msg.toViewerId) {
         const viewer = viewers.get(msg.toViewerId);
+
         if (viewer) {
-          send(viewer, { ...msg, cameraId });
+          send(viewer.ws, {
+            ...msg,
+            cameraId
+          });
         }
       }
     });
 
     ws.on("close", () => {
-      if (cameras.get(cameraId) === ws) {
-        cameras.delete(cameraId);
+      if (cameraSocket === ws) {
+        cameraSocket = null;
+
+        const oldCameraId = cameraId;
+        cameraId = null;
+
         for (const viewer of viewers.values()) {
-          send(viewer, { type: "camera-offline", cameraId });
+          send(viewer.ws, {
+            type: "camera-offline",
+            cameraId: oldCameraId
+          });
         }
-        telegram(`🔴 Camera disconnected.\nCamera ID: ${cameraId}`);
       }
     });
 
     return;
   }
 
-  const viewerId = makeId();
-  viewers.set(viewerId, ws);
+  /*
+   * VIEWER
+   */
+  if (pathname === "/viewer") {
+    const viewerId = makeId();
 
-  send(ws, {
-    type: "role",
-    role: "viewer",
-    viewerId,
-    cameras: [...cameras.keys()]
-  });
+    const viewer = {
+      ws,
+      viewerId
+    };
 
-  for (const cameraId of cameras.keys()) {
-    send(ws, { type: "camera-online", cameraId });
-  }
+    viewers.set(viewerId, viewer);
 
-  ws.on("message", raw => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
+    send(ws, {
+      type: "role",
+      role: "viewer",
+      viewerId,
+      cameras: cameraSocket && cameraId
+        ? [cameraId]
+        : []
+    });
+
+    if (cameraSocket && cameraId) {
+      send(ws, {
+        type: "camera-online",
+        cameraId
+      });
     }
 
-    if (msg.type === "viewer-ready" && msg.cameraId) {
-      const camera = cameras.get(msg.cameraId);
-      if (camera) {
-        send(camera, {
-          type: "viewer-ready",
+    ws.on("message", raw => {
+      let msg;
+
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+
+      if (!cameraSocket || !cameraId) {
+        return;
+      }
+
+      /*
+       * Viewer requests WebRTC connection.
+       */
+      if (msg.type === "viewer-ready") {
+        send(cameraSocket, {
+          ...msg,
+          viewerId,
+          cameraId
+        });
+
+        return;
+      }
+
+      /*
+       * Forward WebRTC signaling to camera.
+       */
+      if (
+        msg.type === "answer" ||
+        msg.type === "candidate"
+      ) {
+        send(cameraSocket, {
+          ...msg,
+          viewerId,
+          cameraId
+        });
+      }
+    });
+
+    ws.on("close", () => {
+      viewers.delete(viewerId);
+
+      /*
+       * Tell camera that this viewer disconnected.
+       */
+      if (cameraSocket) {
+        send(cameraSocket, {
+          type: "viewer-left",
           viewerId
         });
       }
-      return;
-    }
-
-    if (msg.cameraId) {
-      const camera = cameras.get(msg.cameraId);
-      if (camera) {
-        send(camera, {
-          ...msg,
-          toViewerId: viewerId
-        });
-      }
-    }
-  });
-
-  ws.on("close", () => {
-    viewers.delete(viewerId);
-  });
+    });
+  }
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Multi-camera server running on port ${PORT}`);
+  console.log(
+    `Multi-camera server running on port ${PORT}`
+  );
 });
