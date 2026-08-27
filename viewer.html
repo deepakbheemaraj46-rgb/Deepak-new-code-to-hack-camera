@@ -2,47 +2,57 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
 <title>Live Camera Viewer</title>
 
 <style>
-body {
-  margin: 0;
-  background: #111;
-  color: #fff;
-  font-family: Arial, sans-serif;
-  text-align: center;
-  padding: 15px;
+body{
+  margin:0;
+  background:#111;
+  color:#fff;
+  font-family:Arial,sans-serif;
+  text-align:center;
+  padding:15px;
 }
 
-#status {
-  margin: 15px;
-  font-size: 17px;
+#status{
+  font-size:17px;
+  margin:15px;
 }
 
-#buttons {
-  margin: 15px;
+#buttons{
+  margin:15px;
 }
 
-button {
-  padding: 12px 20px;
-  margin: 5px;
-  border: 0;
-  border-radius: 8px;
-  font-size: 16px;
+button{
+  padding:12px 18px;
+  margin:5px;
+  border:0;
+  border-radius:8px;
+  font-size:16px;
+  cursor:pointer;
 }
 
-button.active {
-  outline: 3px solid #888;
+button:disabled{
+  opacity:.45;
+  cursor:not-allowed;
 }
 
-video {
-  width: 95%;
-  max-width: 900px;
-  background: #000;
-  border-radius: 10px;
-  margin: 10px auto;
-  display: block;
+button.active{
+  outline:3px solid #fff;
+}
+
+#message{
+  color:#aaa;
+  margin:10px;
+}
+
+video{
+  width:95%;
+  max-width:900px;
+  background:#000;
+  border-radius:10px;
+  display:block;
+  margin:10px auto;
 }
 </style>
 </head>
@@ -51,18 +61,20 @@ video {
 
 <h1>👁️ Live Camera Viewer</h1>
 
-<div id="status">
-Connecting...
-</div>
+<div id="status">Connecting...</div>
 
 <div id="buttons">
-  <button id="frontBtn">
+  <button id="frontBtn" disabled>
     📷 Front Camera
   </button>
 
-  <button id="backBtn">
+  <button id="backBtn" disabled>
     📷 Back Camera
   </button>
+</div>
+
+<div id="message">
+  Waiting for camera...
 </div>
 
 <video
@@ -73,28 +85,28 @@ Connecting...
 </video>
 
 <script>
-const status =
-  document.getElementById("status");
-
-const frontBtn =
-  document.getElementById("frontBtn");
-
-const backBtn =
-  document.getElementById("backBtn");
-
-const remoteVideo =
-  document.getElementById("remoteVideo");
+const status = document.getElementById("status");
+const frontBtn = document.getElementById("frontBtn");
+const backBtn = document.getElementById("backBtn");
+const messageBox = document.getElementById("message");
+const remoteVideo = document.getElementById("remoteVideo");
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" +
-  location.host +
-  "/viewer"
+  "//" + location.host + "/viewer"
 );
 
 const peers = new Map();
-const streams = new Map();
 const pendingCandidates = new Map();
+
+/*
+  Streams are mapped by the transceiver order.
+
+  0 = Front
+  1 = Back
+*/
+
+const cameraStreams = new Map();
 
 let activeCameraId = null;
 
@@ -104,19 +116,42 @@ function send(message) {
   }
 }
 
-function selectStream(type) {
-  const stream =
-    streams.get(type);
+function updateButtons(cameraId) {
+  const data = cameraStreams.get(cameraId);
+
+  if (!data) return;
+
+  frontBtn.disabled = !data.available.front;
+  backBtn.disabled = !data.available.back;
+
+  if (!data.available.back) {
+    messageBox.textContent =
+      "Front camera available. " +
+      "This device does not support Front + Back simultaneously.";
+  } else {
+    messageBox.textContent =
+      "Both cameras are available.";
+  }
+}
+
+function showCamera(type) {
+  const data =
+    cameraStreams.get(activeCameraId);
+
+  if (!data) return;
+
+  const stream = data.streams[type];
 
   if (!stream) {
-    status.textContent =
-      `🔴 ${type} camera not available`;
+    messageBox.textContent =
+      type === "back"
+        ? "Back camera is not available on this device."
+        : "Front camera is not available.";
 
     return;
   }
 
-  remoteVideo.srcObject =
-    stream;
+  remoteVideo.srcObject = stream;
 
   remoteVideo.play().catch(() => {});
 
@@ -130,16 +165,21 @@ function selectStream(type) {
     type === "back"
   );
 
+  messageBox.textContent =
+    type === "front"
+      ? "Showing Front Camera"
+      : "Showing Back Camera";
+
   status.textContent =
-    `🟢 ${type} camera LIVE`;
+    "🟢 Camera LIVE";
 }
 
 frontBtn.onclick = () => {
-  selectStream("front");
+  showCamera("front");
 };
 
 backBtn.onclick = () => {
-  selectStream("back");
+  showCamera("back");
 };
 
 function startPeer(cameraId) {
@@ -147,15 +187,25 @@ function startPeer(cameraId) {
 
   activeCameraId = cameraId;
 
-  const pc =
-    new RTCPeerConnection({
-      iceServers: [
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
+  cameraStreams.set(cameraId, {
+    streams: {
+      front: null,
+      back: null
+    },
+    available: {
+      front: false,
+      back: false
+    }
+  });
+
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      {
+        urls:
+          "stun:stun.l.google.com:19302"
+      }
+    ]
+  });
 
   peers.set(cameraId, pc);
 
@@ -174,33 +224,45 @@ function startPeer(cameraId) {
     }
   };
 
-  pc.ontrack = event => {
-    const track =
-      event.track;
+  /*
+    Track event order corresponds to the
+    sender transceiver order:
 
-    const stream =
+    first = Front
+    second = Back
+  */
+
+  let trackIndex = 0;
+
+  pc.ontrack = event => {
+    const type =
+      trackIndex === 0
+        ? "front"
+        : "back";
+
+    trackIndex++;
+
+    const data =
+      cameraStreams.get(cameraId);
+
+    if (!data) return;
+
+    data.streams[type] =
       event.streams[0];
 
-    if (!stream) return;
+    data.available[type] = true;
 
-    const settings =
-      track.getSettings();
+    updateButtons(cameraId);
 
-    let type =
-      settings.facingMode === "environment"
-        ? "back"
-        : "front";
-
-    streams.set(
-      type,
-      stream
-    );
+    /*
+      Automatically show Front first.
+    */
 
     if (
-      !remoteVideo.srcObject ||
-      type === "front"
+      type === "front" &&
+      !remoteVideo.srcObject
     ) {
-      selectStream(type);
+      showCamera("front");
     }
   };
 
@@ -225,7 +287,9 @@ ws.onmessage = async event => {
 
     if (Array.isArray(msg.cameras)) {
       msg.cameras.forEach(
-        startPeer
+        cameraId => {
+          startPeer(cameraId);
+        }
       );
     }
 
@@ -249,36 +313,43 @@ ws.onmessage = async event => {
   }
 
   if (msg.type === "camera-offline") {
-    status.textContent =
-      "🔴 Camera offline";
+    const pc =
+      peers.get(msg.cameraId);
+
+    if (pc) pc.close();
+
+    peers.delete(msg.cameraId);
+    cameraStreams.delete(msg.cameraId);
 
     if (activeCameraId === msg.cameraId) {
-      remoteVideo.srcObject = null;
       activeCameraId = null;
+      remoteVideo.srcObject = null;
+
+      frontBtn.disabled = true;
+      backBtn.disabled = true;
+
+      status.textContent =
+        "🔴 Camera offline";
     }
 
     return;
   }
 
   if (msg.type === "offer") {
-    const cameraId =
-      msg.cameraId;
+    const cameraId = msg.cameraId;
 
     if (!peers.has(cameraId)) {
       startPeer(cameraId);
     }
 
-    const pc =
-      peers.get(cameraId);
+    const pc = peers.get(cameraId);
 
     await pc.setRemoteDescription(
       msg.offer
     );
 
     const queued =
-      pendingCandidates.get(
-        cameraId
-      ) || [];
+      pendingCandidates.get(cameraId) || [];
 
     for (const candidate of queued) {
       await pc
@@ -294,9 +365,7 @@ ws.onmessage = async event => {
     const answer =
       await pc.createAnswer();
 
-    await pc.setLocalDescription(
-      answer
-    );
+    await pc.setLocalDescription(answer);
 
     send({
       type: "answer",
@@ -308,19 +377,21 @@ ws.onmessage = async event => {
   }
 
   if (msg.type === "candidate") {
-    const pc =
-      peers.get(msg.cameraId);
+    const pc = peers.get(msg.cameraId);
 
-    if (!pc) return;
+    if (!pc || !msg.candidate) return;
 
     if (pc.remoteDescription) {
       await pc
         .addIceCandidate(msg.candidate)
         .catch(() => {});
     } else {
-      pendingCandidates
-        .get(msg.cameraId)
-        .push(msg.candidate);
+      const queue =
+        pendingCandidates.get(msg.cameraId);
+
+      if (queue) {
+        queue.push(msg.candidate);
+      }
     }
   }
 };
