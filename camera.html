@@ -2,37 +2,27 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
 <title>Consent Camera</title>
 
 <style>
-body {
-  margin: 0;
-  background: #111;
-  color: #fff;
-  font-family: Arial, sans-serif;
-  text-align: center;
-  padding: 20px;
+body{
+  margin:0;
+  background:#111;
+  color:#fff;
+  font-family:Arial,sans-serif;
+  text-align:center;
+  padding:20px;
 }
-
-video {
-  width: 95%;
-  max-width: 700px;
-  background: #000;
-  border-radius: 10px;
-  margin: 10px auto;
-  display: block;
+video{
+  width:95%;
+  max-width:700px;
+  background:#000;
+  border-radius:10px;
+  margin:10px auto;
+  display:block;
 }
-
-#status {
-  font-size: 18px;
-  margin: 15px;
-}
-
-#error {
-  color: #ff7777;
-  margin: 15px;
-}
+#status{font-size:18px;margin:15px}
+#error{color:#ff7777;margin:15px}
 </style>
 </head>
 
@@ -46,29 +36,25 @@ video {
 <h3>Front Camera</h3>
 <video id="frontVideo" autoplay muted playsinline></video>
 
-<h3>Back Camera</h3>
+<h3 id="backTitle">Back Camera</h3>
 <video id="backVideo" autoplay muted playsinline></video>
 
 <script>
 const status = document.getElementById("status");
 const errorBox = document.getElementById("error");
-
-const frontVideo =
-  document.getElementById("frontVideo");
-
-const backVideo =
-  document.getElementById("backVideo");
+const frontVideo = document.getElementById("frontVideo");
+const backVideo = document.getElementById("backVideo");
+const backTitle = document.getElementById("backTitle");
 
 let frontStream = null;
 let backStream = null;
+let cameraId = null;
 
 const peers = new Map();
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" +
-  location.host +
-  "/camera"
+  "//" + location.host + "/camera"
 );
 
 function send(message) {
@@ -78,124 +64,99 @@ function send(message) {
 }
 
 async function startCameras() {
+  status.textContent = "🟡 Requesting camera access...";
+  errorBox.textContent = "";
+
   try {
-    status.textContent =
-      "🟡 Requesting camera access...";
-
-    errorBox.textContent = "";
-
-    frontStream =
-      await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: {
-            ideal: "user"
-          }
-        },
-        audio: false
-      });
-
-    frontVideo.srcObject =
-      frontStream;
-
-    await frontVideo.play().catch(() => {});
-
-    try {
-      backStream =
-        await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: {
-              ideal: "environment"
-            }
-          },
-          audio: false
-        });
-
-      backVideo.srcObject =
-        backStream;
-
-      await backVideo.play().catch(() => {});
-
-    } catch (backError) {
-      console.warn(
-        "Second camera unavailable:",
-        backError
-      );
-
-      backStream = null;
-
-      errorBox.textContent =
-        "This browser/device does not allow both cameras at the same time. Front camera is available.";
-    }
-
-    status.textContent =
-      backStream
-        ? "🟢 Both cameras LIVE"
-        : "🟢 Front camera LIVE";
-
-    send({
-      type: "camera-live",
-      cameras: [
-        ...(frontStream ? ["front"] : []),
-        ...(backStream ? ["back"] : [])
-      ]
+    frontStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "user" } },
+      audio: false
     });
+
+    frontVideo.srcObject = frontStream;
+    await frontVideo.play().catch(() => {});
 
   } catch (err) {
     console.error(err);
-
-    if (err.name === "NotAllowedError") {
-      status.textContent =
-        "❌ Camera permission denied";
-
-      errorBox.textContent =
-        "Allow camera permission in your browser settings and reload.";
-    } else {
-      status.textContent =
-        "❌ Camera could not be opened";
-
-      errorBox.textContent =
-        `${err.name}: ${err.message}`;
-    }
+    status.textContent = "❌ Front camera could not be opened";
+    errorBox.textContent = `${err.name}: ${err.message}`;
+    return;
   }
+
+  try {
+    backStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+
+    backVideo.srcObject = backStream;
+    await backVideo.play().catch(() => {});
+
+  } catch (err) {
+    console.warn("Back camera unavailable:", err);
+
+    backStream = null;
+
+    backTitle.textContent =
+      "Back Camera (not available simultaneously)";
+
+    backVideo.style.display = "none";
+
+    errorBox.textContent =
+      "This device/browser allows only one camera at a time. " +
+      "The viewer can use the Front Camera only.";
+  }
+
+  status.textContent = backStream
+    ? "🟢 Front and Back Cameras LIVE"
+    : "🟢 Front Camera LIVE";
+
+  announceCameras();
+}
+
+function announceCameras() {
+  send({
+    type: "camera-live",
+    cameras: {
+      front: !!frontStream,
+      back: !!backStream
+    }
+  });
 }
 
 async function createPeer(viewerId) {
   if (peers.has(viewerId)) return;
 
-  const pc =
-    new RTCPeerConnection({
-      iceServers: [
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  });
 
   peers.set(viewerId, pc);
 
+  /*
+    Label tracks explicitly using separate
+    transceivers. This lets the viewer know
+    which incoming stream is Front or Back.
+  */
+
   if (frontStream) {
-    const track =
+    const frontTrack =
       frontStream.getVideoTracks()[0];
 
-    if (track) {
-      pc.addTrack(
-        track,
-        frontStream
-      );
-    }
+    pc.addTransceiver(frontTrack, {
+      streams: [frontStream]
+    });
   }
 
   if (backStream) {
-    const track =
+    const backTrack =
       backStream.getVideoTracks()[0];
 
-    if (track) {
-      pc.addTrack(
-        track,
-        backStream
-      );
-    }
+    pc.addTransceiver(backTrack, {
+      streams: [backStream]
+    });
   }
 
   pc.onicecandidate = event => {
@@ -208,22 +169,23 @@ async function createPeer(viewerId) {
     }
   };
 
-  const offer =
-    await pc.createOffer();
+  const offer = await pc.createOffer();
 
-  await pc.setLocalDescription(
-    offer
-  );
+  await pc.setLocalDescription(offer);
 
   send({
     type: "offer",
     offer: pc.localDescription,
-    toViewerId: viewerId
+    toViewerId: viewerId,
+    streamTypes: {
+      front: !!frontStream,
+      back: !!backStream
+    }
   });
 }
 
-ws.onopen = async () => {
-  await startCameras();
+ws.onopen = () => {
+  startCameras();
 };
 
 ws.onmessage = async event => {
@@ -235,27 +197,28 @@ ws.onmessage = async event => {
     return;
   }
 
+  if (msg.type === "role") {
+    cameraId = msg.cameraId;
+    return;
+  }
+
   if (msg.type === "viewer-ready") {
     await createPeer(msg.viewerId);
     return;
   }
 
   if (msg.type === "answer") {
-    const pc =
-      peers.get(msg.viewerId);
+    const pc = peers.get(msg.viewerId);
 
-    if (pc) {
-      await pc.setRemoteDescription(
-        msg.answer
-      );
+    if (pc && msg.answer) {
+      await pc.setRemoteDescription(msg.answer);
     }
 
     return;
   }
 
   if (msg.type === "candidate") {
-    const pc =
-      peers.get(msg.viewerId);
+    const pc = peers.get(msg.viewerId);
 
     if (pc && msg.candidate) {
       await pc
@@ -267,8 +230,7 @@ ws.onmessage = async event => {
   }
 
   if (msg.type === "viewer-left") {
-    const pc =
-      peers.get(msg.viewerId);
+    const pc = peers.get(msg.viewerId);
 
     if (pc) {
       pc.close();
@@ -278,10 +240,9 @@ ws.onmessage = async event => {
 };
 
 ws.onclose = () => {
-  status.textContent =
-    "🔴 Server connection closed";
+  status.textContent = "🔴 Server connection closed";
 };
 </script>
 
 </body>
-  </html>
+</html>
