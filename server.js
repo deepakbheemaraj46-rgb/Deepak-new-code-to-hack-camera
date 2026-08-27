@@ -26,7 +26,7 @@ function send(ws, message) {
 }
 
 const routes = {
-  "/": "index.html",
+  "/": "camera.html",
   "/camera": "camera.html",
   "/camera.html": "camera.html",
   "/viewer": "viewer.html",
