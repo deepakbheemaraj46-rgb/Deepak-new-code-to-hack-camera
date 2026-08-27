@@ -2,79 +2,36 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+
 <title>Consent Camera</title>
 
 <style>
-body{
-  margin:0;
-  background:#111;
-  color:#fff;
-  font-family:Arial,sans-serif;
-  text-align:center;
-  padding:20px;
+body {
+  margin: 0;
+  background: #111;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  text-align: center;
+  padding: 20px;
 }
 
-h1{
-  font-size:25px;
+video {
+  width: 95%;
+  max-width: 700px;
+  background: #000;
+  border-radius: 10px;
+  margin: 10px auto;
+  display: block;
 }
 
-video{
-  width:95%;
-  max-width:900px;
-  background:#000;
-  border-radius:10px;
-  margin:15px auto;
-  display:block;
+#status {
+  font-size: 18px;
+  margin: 15px;
 }
 
-#status{
-  font-size:18px;
-  margin:15px;
-}
-
-#cameraName{
-  font-size:18px;
-  margin:10px;
-}
-
-#id{
-  font-size:13px;
-  color:#aaa;
-  margin:8px;
-  word-break:break-all;
-}
-
-#error{
-  color:#ff7777;
-  margin:15px auto;
-  max-width:600px;
-  line-height:1.5;
-}
-
-select{
-  width:95%;
-  max-width:600px;
-  padding:12px;
-  border-radius:8px;
-  font-size:16px;
-  margin:10px;
-}
-
-button{
-  padding:12px 18px;
-  margin:6px;
-  border:0;
-  border-radius:8px;
-  font-size:16px;
-}
-
-button:disabled{
-  opacity:.5;
-}
-
-#refreshButton{
-  background:#333;
-  color:#fff;
+#error {
+  color: #ff7777;
+  margin: 15px;
 }
 </style>
 </head>
@@ -83,77 +40,29 @@ button:disabled{
 
 <h1>📷 Consent Camera</h1>
 
-<div id="status">
-Connecting...
-</div>
-
-<div id="cameraName">
-Camera: Starting...
-</div>
-
-<div id="id"></div>
-
+<div id="status">Connecting...</div>
 <div id="error"></div>
 
-<select id="cameraSelect" disabled>
-  <option>Requesting camera permission...</option>
-</select>
+<h3>Front Camera</h3>
+<video id="frontVideo" autoplay muted playsinline></video>
 
-<br>
-
-<button id="switchButton" disabled>
-Switch Camera
-</button>
-
-<button id="refreshButton">
-Refresh Cameras
-</button>
-
-<video
-  id="localVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
+<h3>Back Camera</h3>
+<video id="backVideo" autoplay muted playsinline></video>
 
 <script>
+const status = document.getElementById("status");
+const errorBox = document.getElementById("error");
 
-const status =
-  document.getElementById("status");
+const frontVideo =
+  document.getElementById("frontVideo");
 
-const cameraName =
-  document.getElementById("cameraName");
+const backVideo =
+  document.getElementById("backVideo");
 
-const idBox =
-  document.getElementById("id");
-
-const errorBox =
-  document.getElementById("error");
-
-const localVideo =
-  document.getElementById("localVideo");
-
-const cameraSelect =
-  document.getElementById("cameraSelect");
-
-const switchButton =
-  document.getElementById("switchButton");
-
-const refreshButton =
-  document.getElementById("refreshButton");
-
-
-let currentStream = null;
-let currentDeviceId = "";
-let cameras = [];
-let recovering = false;
+let frontStream = null;
+let backStream = null;
 
 const peers = new Map();
-
-
-// =====================================================
-// WEBSOCKET
-// =====================================================
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
@@ -162,966 +71,217 @@ const ws = new WebSocket(
   "/camera"
 );
 
-function send(data){
-
-  if(ws.readyState === WebSocket.OPEN){
-    ws.send(JSON.stringify(data));
+function send(message) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
   }
 }
 
+async function startCameras() {
+  try {
+    status.textContent =
+      "🟡 Requesting camera access...";
 
-// =====================================================
-// STOP CURRENT CAMERA
-// =====================================================
+    errorBox.textContent = "";
 
-function stopCamera(){
-
-  if(!currentStream){
-    return;
-  }
-
-  currentStream
-    .getTracks()
-    .forEach(track => {
-      track.stop();
-    });
-
-  currentStream = null;
-
-  localVideo.srcObject = null;
-}
-
-
-// =====================================================
-// CAMERA LABEL
-// =====================================================
-
-function getCameraLabel(device,index){
-
-  if(device.label){
-    return device.label;
-  }
-
-  return "Camera " + (index + 1);
-}
-
-
-// =====================================================
-// GET CAMERAS
-// =====================================================
-
-async function getCameras(){
-
-  if(
-    !navigator.mediaDevices ||
-    !navigator.mediaDevices.enumerateDevices
-  ){
-
-    throw new Error(
-      "Camera API is not available. Please use HTTPS."
-    );
-  }
-
-  const devices =
-    await navigator.mediaDevices.enumerateDevices();
-
-  cameras =
-    devices.filter(
-      device => device.kind === "videoinput"
-    );
-
-  cameraSelect.innerHTML = "";
-
-  if(cameras.length === 0){
-
-    cameraSelect.innerHTML =
-      "<option>No cameras found</option>";
-
-    cameraSelect.disabled = true;
-    switchButton.disabled = true;
-
-    return;
-  }
-
-  cameras.forEach((device,index) => {
-
-    const option =
-      document.createElement("option");
-
-    option.value =
-      device.deviceId;
-
-    option.textContent =
-      getCameraLabel(device,index);
-
-    cameraSelect.appendChild(option);
-  });
-
-  cameraSelect.disabled = false;
-  switchButton.disabled = false;
-
-  // Keep current camera selected
-  if(currentDeviceId){
-
-    const exists =
-      cameras.some(
-        c => c.deviceId === currentDeviceId
-      );
-
-    if(exists){
-      cameraSelect.value =
-        currentDeviceId;
-    }
-  }
-}
-
-
-// =====================================================
-// OPEN CAMERA BY DEVICE ID
-// =====================================================
-
-async function openCamera(deviceId){
-
-  errorBox.textContent = "";
-
-  status.textContent =
-    "🟡 Opening camera...";
-
-  try{
-
-    if(
-      !navigator.mediaDevices ||
-      !navigator.mediaDevices.getUserMedia
-    ){
-
-      throw new Error(
-        "Camera API unavailable. Use HTTPS."
-      );
-    }
-
-    // Stop previous camera
-    stopCamera();
-
-    // Give Android time to release camera
-    await new Promise(
-      resolve => setTimeout(resolve,500)
-    );
-
-    const stream =
+    frontStream =
       await navigator.mediaDevices.getUserMedia({
-
-        video:{
-          deviceId:{
-            exact:deviceId
-          },
-
-          width:{
-            ideal:1280
-          },
-
-          height:{
-            ideal:720
+        video: {
+          facingMode: {
+            ideal: "user"
           }
         },
-
-        audio:false
+        audio: false
       });
 
-    currentStream = stream;
+    frontVideo.srcObject =
+      frontStream;
 
-    const track =
-      stream.getVideoTracks()[0];
+    await frontVideo.play().catch(() => {});
 
-    if(!track){
-
-      throw new Error(
-        "No video track returned."
-      );
-    }
-
-    currentDeviceId =
-      track.getSettings().deviceId ||
-      deviceId;
-
-    localVideo.srcObject =
-      stream;
-
-    await localVideo
-      .play()
-      .catch(() => {});
-
-
-    // Monitor camera
-    track.onended = () => {
-
-      console.log(
-        "Camera track ended"
-      );
-
-      recoverCamera();
-    };
-
-
-    cameraName.textContent =
-      "Camera: " +
-      (track.label || "Selected camera");
-
-    idBox.textContent =
-      "Camera ID: " +
-      currentDeviceId;
-
-    status.textContent =
-      "🟢 Camera LIVE";
-
-
-    // Tell viewer the camera is live
-    send({
-      type:"camera-live",
-
-      cameraId:
-        undefined,
-
-      facingMode:
-        track.getSettings().facingMode || null
-    });
-
-
-    // Replace video track for all viewers
-    for(
-      const pc of peers.values()
-    ){
-
-      const sender =
-        pc.getSenders().find(
-          s =>
-            s.track &&
-            s.track.kind === "video"
-        );
-
-      if(sender){
-
-        try{
-
-          await sender.replaceTrack(
-            track
-          );
-
-        }catch(err){
-
-          console.error(
-            "Track replacement failed:",
-            err
-          );
-        }
-      }
-    }
-
-
-    // Refresh device list after permission
-    await getCameras();
-
-    cameraSelect.value =
-      currentDeviceId;
-
-  }catch(err){
-
-    console.error(
-      "Camera error:",
-      err
-    );
-
-    currentStream = null;
-
-    status.textContent =
-      "❌ Camera could not be opened";
-
-    cameraName.textContent =
-      "Camera: Unavailable";
-
-
-    if(err.name === "NotAllowedError"){
-
-      errorBox.textContent =
-        "Camera permission was denied. Allow camera access in your browser/site settings and try again.";
-
-    }else if(
-      err.name === "NotFoundError"
-    ){
-
-      errorBox.textContent =
-        "This camera is no longer available.";
-
-    }else if(
-      err.name === "NotReadableError"
-    ){
-
-      errorBox.textContent =
-        "The camera is busy. Close other apps or browser tabs using the camera and try again.";
-
-    }else if(
-      err.name === "OverconstrainedError"
-    ){
-
-      errorBox.textContent =
-        "The selected camera could not satisfy the requested settings. Try another camera.";
-
-    }else if(
-      err.name === "SecurityError"
-    ){
-
-      errorBox.textContent =
-        "Camera access requires HTTPS.";
-
-    }else{
-
-      errorBox.textContent =
-        (err.name || "Error") +
-        ": " +
-        (err.message || "Unknown error");
-    }
-  }
-}
-
-
-// =====================================================
-// FIRST CAMERA
-// =====================================================
-
-async function startFirstCamera(){
-
-  errorBox.textContent = "";
-
-  status.textContent =
-    "🟡 Requesting camera permission...";
-
-  try{
-
-    /*
-      First call does NOT specify a device ID.
-      This causes Android/browser to display
-      the normal permission prompt.
-    */
-
-    const stream =
-      await navigator.mediaDevices
-        .getUserMedia({
-          video:true,
-          audio:false
+    try {
+      backStream =
+        await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: {
+              ideal: "environment"
+            }
+          },
+          audio: false
         });
 
+      backVideo.srcObject =
+        backStream;
 
-    currentStream =
-      stream;
+      await backVideo.play().catch(() => {});
 
-
-    const track =
-      stream.getVideoTracks()[0];
-
-    if(!track){
-
-      throw new Error(
-        "No camera track returned."
+    } catch (backError) {
+      console.warn(
+        "Second camera unavailable:",
+        backError
       );
+
+      backStream = null;
+
+      errorBox.textContent =
+        "This browser/device does not allow both cameras at the same time. Front camera is available.";
     }
 
-
-    currentDeviceId =
-      track.getSettings().deviceId || "";
-
-
-    localVideo.srcObject =
-      stream;
-
-    await localVideo
-      .play()
-      .catch(() => {});
-
-
-    track.onended = () => {
-      recoverCamera();
-    };
-
-
-    cameraName.textContent =
-      "Camera: " +
-      (track.label || "Camera");
-
-    idBox.textContent =
-      "Camera ID: " +
-      currentDeviceId;
-
     status.textContent =
-      "🟢 Camera LIVE";
-
+      backStream
+        ? "🟢 Both cameras LIVE"
+        : "🟢 Front camera LIVE";
 
     send({
-      type:"camera-live",
-
-      facingMode:
-        track.getSettings().facingMode || null
+      type: "camera-live",
+      cameras: [
+        ...(frontStream ? ["front"] : []),
+        ...(backStream ? ["back"] : [])
+      ]
     });
 
+  } catch (err) {
+    console.error(err);
 
-    // Now that permission was granted,
-    // the browser normally exposes camera labels.
-    await getCameras();
-
-
-  }catch(err){
-
-    console.error(
-      "Initial camera error:",
-      err
-    );
-
-
-    status.textContent =
-      "❌ Camera could not be opened";
-
-    cameraName.textContent =
-      "Camera: Unavailable";
-
-
-    if(err.name === "NotAllowedError"){
+    if (err.name === "NotAllowedError") {
+      status.textContent =
+        "❌ Camera permission denied";
 
       errorBox.textContent =
-        "Camera permission was denied. Allow camera permission for this website, then reload the page.";
-
-    }else if(
-      err.name === "NotFoundError"
-    ){
-
-      errorBox.textContent =
-        "No camera was found on this device.";
-
-    }else if(
-      err.name === "NotReadableError"
-    ){
+        "Allow camera permission in your browser settings and reload.";
+    } else {
+      status.textContent =
+        "❌ Camera could not be opened";
 
       errorBox.textContent =
-        "The camera is already being used by another app or tab.";
-
-    }else{
-
-      errorBox.textContent =
-        (err.name || "Error") +
-        ": " +
-        (err.message || "Unknown error");
+        `${err.name}: ${err.message}`;
     }
   }
 }
 
-
-// =====================================================
-// SWITCH TO SELECTED CAMERA
-// =====================================================
-
-async function switchSelectedCamera(){
-
-  const deviceId =
-    cameraSelect.value;
-
-  if(!deviceId){
-
-    errorBox.textContent =
-      "Please select a camera.";
-
-    return;
-  }
-
-  if(
-    deviceId === currentDeviceId
-  ){
-
-    status.textContent =
-      "🟢 Camera already selected";
-
-    return;
-  }
-
-  switchButton.disabled = true;
-
-  status.textContent =
-    "🟡 Switching camera...";
-
-
-  try{
-
-    await openCamera(
-      deviceId
-    );
-
-  }finally{
-
-    switchButton.disabled = false;
-  }
-}
-
-
-// =====================================================
-// AUTOMATIC RECOVERY
-// =====================================================
-
-async function recoverCamera(){
-
-  if(recovering){
-    return;
-  }
-
-  recovering = true;
-
-  status.textContent =
-    "🟡 Camera stopped — trying to restart...";
-
-
-  const oldDeviceId =
-    currentDeviceId;
-
-
-  try{
-
-    stopCamera();
-
-    await new Promise(
-      resolve => setTimeout(resolve,1000)
-    );
-
-
-    if(oldDeviceId){
-
-      await openCamera(
-        oldDeviceId
-      );
-
-    }else{
-
-      await startFirstCamera();
-    }
-
-  }catch(err){
-
-    console.error(
-      "Recovery failed:",
-      err
-    );
-  }
-
-
-  recovering = false;
-}
-
-
-// =====================================================
-// REFRESH CAMERA LIST
-// =====================================================
-
-refreshButton.onclick =
-  async () => {
-
-    try{
-
-      await getCameras();
-
-    }catch(err){
-
-      errorBox.textContent =
-        err.message;
-    }
-  };
-
-
-// =====================================================
-// SWITCH BUTTON
-// =====================================================
-
-switchButton.onclick =
-  switchSelectedCamera;
-
-
-// =====================================================
-// WEBSOCKET OPEN
-// =====================================================
-
-ws.onopen =
-  async () => {
-
-    status.textContent =
-      "🟡 Camera connected";
-
-    await startFirstCamera();
-  };
-
-
-// =====================================================
-// WEBSOCKET MESSAGE
-// =====================================================
-
-ws.onmessage =
-  async event => {
-
-    let msg;
-
-    try{
-
-      msg =
-        JSON.parse(event.data);
-
-    }catch{
-
-      return;
-    }
-
-
-    // Camera ID assigned by server
-    if(msg.type === "role"){
-
-      idBox.textContent =
-        "Camera ID: " +
-        msg.cameraId;
-
-      return;
-    }
-
-
-    // Viewer wants to connect
-    if(
-      msg.type === "viewer-ready"
-    ){
-
-      await createPeer(
-        msg.viewerId
-      );
-
-      return;
-    }
-
-
-    // Viewer requests a camera switch
-    if(
-      msg.type === "switch-camera"
-    ){
-
-      /*
-        This is supported for compatibility
-        with the previous viewer.
-
-        The viewer can request front/back,
-        and we try to match it to the
-        available device.
-      */
-
-      const wanted =
-        msg.facingMode;
-
-      const device =
-        cameras.find(
-          d => {
-
-            const label =
-              (d.label || "")
-                .toLowerCase();
-
-            if(wanted === "user"){
-
-              return (
-                label.includes("front") ||
-                label.includes("user") ||
-                label.includes("selfie")
-              );
-            }
-
-            if(
-              wanted === "environment"
-            ){
-
-              return (
-                label.includes("back") ||
-                label.includes("rear") ||
-                label.includes("environment")
-              );
-            }
-
-            return false;
-          }
-        );
-
-
-      if(device){
-
-        await openCamera(
-          device.deviceId
-        );
-
-      }else{
-
-        errorBox.textContent =
-          "The requested camera was not found in the available camera list.";
-      }
-
-      return;
-    }
-
-
-    // WebRTC answer
-    if(msg.type === "answer"){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(!pc){
-        return;
-      }
-
-      try{
-
-        await pc.setRemoteDescription(
-          msg.answer
-        );
-
-      }catch(err){
-
-        console.error(
-          "Answer error:",
-          err
-        );
-      }
-
-      return;
-    }
-
-
-    // ICE candidate
-    if(msg.type === "candidate"){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(
-        !pc ||
-        !msg.candidate
-      ){
-
-        return;
-      }
-
-      try{
-
-        await pc.addIceCandidate(
-          msg.candidate
-        );
-
-      }catch(err){
-
-        console.error(
-          "ICE error:",
-          err
-        );
-      }
-
-      return;
-    }
-
-
-    // Viewer disconnected
-    if(
-      msg.type === "viewer-left"
-    ){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(pc){
-
-        pc.close();
-
-        peers.delete(
-          msg.viewerId
-        );
-      }
-    }
-  };
-
-
-// =====================================================
-// CREATE WEBRTC PEER
-// =====================================================
-
-async function createPeer(
-  viewerId
-){
-
-  if(
-    peers.has(viewerId)
-  ){
-
-    return;
-  }
-
+async function createPeer(viewerId) {
+  if (peers.has(viewerId)) return;
 
   const pc =
     new RTCPeerConnection({
-
-      iceServers:[
+      iceServers: [
         {
           urls:
             "stun:stun.l.google.com:19302"
         }
       ]
-
     });
 
+  peers.set(viewerId, pc);
 
-  peers.set(
-    viewerId,
-    pc
-  );
-
-
-  if(currentStream){
-
+  if (frontStream) {
     const track =
-      currentStream
-        .getVideoTracks()[0];
+      frontStream.getVideoTracks()[0];
 
-    if(track){
-
+    if (track) {
       pc.addTrack(
         track,
-        currentStream
+        frontStream
       );
     }
   }
 
+  if (backStream) {
+    const track =
+      backStream.getVideoTracks()[0];
 
-  pc.onicecandidate =
-    event => {
-
-      if(
-        event.candidate
-      ){
-
-        send({
-
-          type:"candidate",
-
-          candidate:
-            event.candidate,
-
-          toViewerId:
-            viewerId
-        });
-      }
-    };
-
-
-  pc.onconnectionstatechange =
-    () => {
-
-      console.log(
-        "Viewer",
-        viewerId,
-        "state:",
-        pc.connectionState
+    if (track) {
+      pc.addTrack(
+        track,
+        backStream
       );
-    };
-
-
-  try{
-
-    const offer =
-      await pc.createOffer();
-
-    await pc.setLocalDescription(
-      offer
-    );
-
-
-    send({
-
-      type:"offer",
-
-      offer:
-        pc.localDescription,
-
-      toViewerId:
-        viewerId
-    });
-
-
-  }catch(err){
-
-    console.error(
-      "Offer error:",
-      err
-    );
+    }
   }
+
+  pc.onicecandidate = event => {
+    if (event.candidate) {
+      send({
+        type: "candidate",
+        candidate: event.candidate,
+        toViewerId: viewerId
+      });
+    }
+  };
+
+  const offer =
+    await pc.createOffer();
+
+  await pc.setLocalDescription(
+    offer
+  );
+
+  send({
+    type: "offer",
+    offer: pc.localDescription,
+    toViewerId: viewerId
+  });
 }
 
+ws.onopen = async () => {
+  await startCameras();
+};
 
-// =====================================================
-// CAMERA TRACK HEALTH CHECK
-// =====================================================
+ws.onmessage = async event => {
+  let msg;
 
-setInterval(
-  () => {
+  try {
+    msg = JSON.parse(event.data);
+  } catch {
+    return;
+  }
 
-    if(!currentStream){
-      return;
+  if (msg.type === "viewer-ready") {
+    await createPeer(msg.viewerId);
+    return;
+  }
+
+  if (msg.type === "answer") {
+    const pc =
+      peers.get(msg.viewerId);
+
+    if (pc) {
+      await pc.setRemoteDescription(
+        msg.answer
+      );
     }
 
-    const tracks =
-      currentStream
-        .getVideoTracks();
+    return;
+  }
 
-    if(
-      !tracks.length
-    ){
+  if (msg.type === "candidate") {
+    const pc =
+      peers.get(msg.viewerId);
 
-      recoverCamera();
-      return;
+    if (pc && msg.candidate) {
+      await pc
+        .addIceCandidate(msg.candidate)
+        .catch(() => {});
     }
 
+    return;
+  }
 
-    if(
-      tracks[0].readyState !== "live"
-    ){
+  if (msg.type === "viewer-left") {
+    const pc =
+      peers.get(msg.viewerId);
 
-      recoverCamera();
+    if (pc) {
+      pc.close();
+      peers.delete(msg.viewerId);
     }
+  }
+};
 
-  },
-  5000
-);
-
-
-// =====================================================
-// WEBSOCKET EVENTS
-// =====================================================
-
-ws.onclose =
-  () => {
-
-    status.textContent =
-      "🔴 Camera connection closed";
-
-    stopCamera();
-  };
-
-
-ws.onerror =
-  () => {
-
-    status.textContent =
-      "❌ WebSocket connection error";
-  };
-
+ws.onclose = () => {
+  status.textContent =
+    "🔴 Server connection closed";
+};
 </script>
 
 </body>
-</html>
+  </html>
