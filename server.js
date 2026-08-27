@@ -5,9 +5,6 @@ const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 10000;
 
-let camera = null;
-const viewers = new Map();
-
 function makeId() {
   return (
     Math.random().toString(36).slice(2, 8) +
@@ -16,96 +13,63 @@ function makeId() {
 }
 
 function send(ws, message) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-  try {
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
-  } catch (err) {
-    console.error("Send error:", err.message);
   }
 }
 
-const routes = {
-  "/": "camera.html",
-  "/camera": "camera.html",
-  "/camera.html": "camera.html",
-  "/viewer": "viewer.html",
-  "/viewer.html": "viewer.html"
-};
-
 const server = http.createServer((req, res) => {
-  let pathname;
+  const routes = {
+    "/": "index.html",
+    "/camera": "camera.html",
+    "/camera.html": "camera.html",
+    "/viewer": "viewer.html",
+    "/viewer.html": "viewer.html"
+  };
 
-  try {
-    pathname = new URL(
-      req.url,
-      `http://${req.headers.host || "localhost"}`
-    ).pathname;
-  } catch {
-    res.writeHead(400);
-    return res.end("Bad request");
-  }
+  const pathname = new URL(
+    req.url,
+    `http://${req.headers.host || "localhost"}`
+  ).pathname;
 
-  const filename = routes[pathname];
+  const file = routes[pathname];
 
-  if (!filename) {
+  if (!file) {
     res.writeHead(404);
     return res.end("Not found");
   }
 
-  fs.readFile(
-    path.join(__dirname, filename),
-    (err, data) => {
-      if (err) {
-        console.error(err);
-        res.writeHead(500);
-        return res.end("Server error");
-      }
-
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store"
-      });
-
-      res.end(data);
+  fs.readFile(path.join(__dirname, file), (err, data) => {
+    if (err) {
+      res.writeHead(500);
+      return res.end("Server error");
     }
-  );
+
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store"
+    });
+
+    res.end(data);
+  });
 });
 
 const wss = new WebSocket.Server({ server });
 
+const cameras = new Map();
+const viewers = new Map();
+
 wss.on("connection", (ws, req) => {
-  let pathname;
+  const pathname = new URL(
+    req.url,
+    "http://localhost"
+  ).pathname;
 
-  try {
-    pathname = new URL(
-      req.url,
-      "http://localhost"
-    ).pathname;
-  } catch {
-    ws.close();
-    return;
-  }
-
-  // =====================================================
   // CAMERA CONNECTION
-  // =====================================================
-
   if (pathname === "/camera") {
     const cameraId = makeId();
 
-    if (camera && camera.ws !== ws) {
-      try {
-        camera.ws.close();
-      } catch {}
-    }
-
-    camera = {
-      ws,
-      id: cameraId
-    };
-
-    console.log("Camera connected:", cameraId);
+    cameras.set(cameraId, ws);
 
     send(ws, {
       type: "role",
@@ -129,47 +93,34 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
-      // Camera is live
       if (msg.type === "camera-live") {
-        console.log(
-          "Camera live:",
-          msg.facingMode
-        );
-
         for (const viewer of viewers.values()) {
           send(viewer.ws, {
             type: "camera-live",
             cameraId,
-            facingMode: msg.facingMode
+            cameras: msg.cameras || []
           });
         }
 
         return;
       }
 
-      // Camera -> viewer
       if (msg.toViewerId) {
-        const viewer =
-          viewers.get(msg.toViewerId);
+        const viewer = viewers.get(msg.toViewerId);
 
-        if (!viewer) return;
-
-        send(viewer.ws, {
-          ...msg,
-          cameraId
-        });
+        if (viewer) {
+          send(viewer.ws, {
+            ...msg,
+            cameraId
+          });
+        }
       }
     });
 
     ws.on("close", () => {
-      if (!camera || camera.ws !== ws) return;
+      if (cameras.get(cameraId) !== ws) return;
 
-      console.log(
-        "Camera disconnected:",
-        cameraId
-      );
-
-      camera = null;
+      cameras.delete(cameraId);
 
       for (const viewer of viewers.values()) {
         send(viewer.ws, {
@@ -179,48 +130,24 @@ wss.on("connection", (ws, req) => {
       }
     });
 
-    ws.on("error", err => {
-      console.error(
-        "Camera WebSocket error:",
-        err.message
-      );
-    });
-
     return;
   }
 
-  // =====================================================
   // VIEWER CONNECTION
-  // =====================================================
-
   if (pathname === "/viewer") {
     const viewerId = makeId();
 
-    const viewer = {
-      ws,
-      id: viewerId
-    };
-
-    viewers.set(viewerId, viewer);
-
-    console.log(
-      "Viewer connected:",
-      viewerId
-    );
+    viewers.set(viewerId, {
+      id: viewerId,
+      ws
+    });
 
     send(ws, {
       type: "role",
       role: "viewer",
       viewerId,
-      cameraId: camera ? camera.id : null
+      cameras: [...cameras.keys()]
     });
-
-    if (camera) {
-      send(ws, {
-        type: "camera-online",
-        cameraId: camera.id
-      });
-    }
 
     ws.on("message", raw => {
       let msg;
@@ -231,86 +158,40 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
-      if (!camera) {
-        send(ws, {
-          type: "camera-offline"
-        });
+      if (msg.type === "viewer-ready" && msg.cameraId) {
+        const camera = cameras.get(msg.cameraId);
 
-        return;
-      }
-
-      // Viewer is ready for WebRTC
-      if (msg.type === "viewer-ready") {
-        send(camera.ws, {
-          type: "viewer-ready",
-          viewerId
-        });
-
-        return;
-      }
-
-      // Request front/back switch
-      if (msg.type === "switch-camera") {
-        if (
-          msg.facingMode !== "user" &&
-          msg.facingMode !== "environment"
-        ) {
-          return;
+        if (camera) {
+          send(camera, {
+            type: "viewer-ready",
+            viewerId
+          });
         }
 
-        send(camera.ws, {
-          type: "switch-camera",
-          facingMode: msg.facingMode,
-          viewerId
-        });
-
         return;
       }
 
-      // Answer
-      if (msg.type === "answer") {
-        send(camera.ws, {
-          type: "answer",
-          answer: msg.answer,
-          viewerId
-        });
+      if (msg.cameraId) {
+        const camera = cameras.get(msg.cameraId);
 
-        return;
-      }
-
-      // ICE candidate
-      if (msg.type === "candidate") {
-        send(camera.ws, {
-          type: "candidate",
-          candidate: msg.candidate,
-          viewerId
-        });
-
-        return;
+        if (camera) {
+          send(camera, {
+            ...msg,
+            toViewerId: viewerId
+          });
+        }
       }
     });
 
     ws.on("close", () => {
-      console.log(
-        "Viewer disconnected:",
-        viewerId
-      );
-
       viewers.delete(viewerId);
 
-      if (camera) {
-        send(camera.ws, {
+      for (const camera of cameras.values()) {
+        send(camera, {
           type: "viewer-left",
           viewerId
         });
       }
-    });
-
-    ws.on("error", err => {
-      console.error(
-        "Viewer WebSocket error:",
-        err.message
-      );
     });
 
     return;
@@ -319,12 +200,6 @@ wss.on("connection", (ws, req) => {
   ws.close();
 });
 
-server.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-    console.log(
-      `Server running on port ${PORT}`
-    );
-  }
-);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
