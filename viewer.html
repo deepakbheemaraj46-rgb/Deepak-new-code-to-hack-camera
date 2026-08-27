@@ -46,13 +46,73 @@ button.active{
   margin:10px;
 }
 
-video{
+/* VIDEO PANEL */
+#videoPanel{
+  position:relative;
   width:95%;
   max-width:900px;
+  margin:10px auto;
   background:#000;
   border-radius:10px;
+  overflow:hidden;
+}
+
+#remoteVideo{
+  width:100%;
   display:block;
-  margin:10px auto;
+  background:#000;
+}
+
+/* SMALL FULLSCREEN BUTTON */
+#fullscreenBtn{
+  position:absolute;
+  right:10px;
+  bottom:10px;
+
+  width:42px;
+  height:42px;
+
+  padding:0;
+  margin:0;
+
+  border-radius:7px;
+
+  background:rgba(0,0,0,.65);
+  color:#fff;
+
+  font-size:22px;
+  line-height:42px;
+
+  z-index:10;
+}
+
+#fullscreenBtn:hover{
+  background:rgba(0,0,0,.85);
+}
+
+/* FULLSCREEN */
+#videoPanel:fullscreen{
+  width:100vw;
+  height:100vh;
+  max-width:none;
+  margin:0;
+  border-radius:0;
+  background:#000;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+#videoPanel:fullscreen #remoteVideo{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+}
+
+#videoPanel:fullscreen #fullscreenBtn{
+  right:15px;
+  bottom:15px;
 }
 </style>
 </head>
@@ -77,75 +137,89 @@ video{
   Waiting for camera...
 </div>
 
-<video
-  id="remoteVideo"
-  autoplay
-  playsinline
-  muted>
-</video>
+<!-- VIDEO PANEL -->
+<div id="videoPanel">
+
+  <video
+    id="remoteVideo"
+    autoplay
+    playsinline
+    muted>
+  </video>
+
+  <button id="fullscreenBtn" title="Full Screen">
+    ⛶
+  </button>
+
+</div>
 
 <script>
-const status = document.getElementById("status");
-const frontBtn = document.getElementById("frontBtn");
-const backBtn = document.getElementById("backBtn");
-const messageBox = document.getElementById("message");
-const remoteVideo = document.getElementById("remoteVideo");
+const status =
+  document.getElementById("status");
+
+const frontBtn =
+  document.getElementById("frontBtn");
+
+const backBtn =
+  document.getElementById("backBtn");
+
+const messageBox =
+  document.getElementById("message");
+
+const remoteVideo =
+  document.getElementById("remoteVideo");
+
+const videoPanel =
+  document.getElementById("videoPanel");
+
+const fullscreenBtn =
+  document.getElementById("fullscreenBtn");
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" + location.host + "/viewer"
+  "//" +
+  location.host +
+  "/viewer"
 );
 
 const peers = new Map();
 const pendingCandidates = new Map();
-
-/*
-  Streams are mapped by the transceiver order.
-
-  0 = Front
-  1 = Back
-*/
-
 const cameraStreams = new Map();
 
 let activeCameraId = null;
 
-function send(message) {
-  if (ws.readyState === WebSocket.OPEN) {
+function send(message){
+  if(ws.readyState === WebSocket.OPEN){
     ws.send(JSON.stringify(message));
   }
 }
 
-function updateButtons(cameraId) {
-  const data = cameraStreams.get(cameraId);
+function updateButtons(cameraId){
+  const data =
+    cameraStreams.get(cameraId);
 
-  if (!data) return;
+  if(!data) return;
 
-  frontBtn.disabled = !data.available.front;
-  backBtn.disabled = !data.available.back;
+  frontBtn.disabled =
+    !data.available.front;
 
-  if (!data.available.back) {
-    messageBox.textContent =
-      "Front camera available. " +
-      "This device does not support Front + Back simultaneously.";
-  } else {
-    messageBox.textContent =
-      "Both cameras are available.";
-  }
+  backBtn.disabled =
+    !data.available.back;
 }
 
-function showCamera(type) {
+function showCamera(type){
   const data =
     cameraStreams.get(activeCameraId);
 
-  if (!data) return;
+  if(!data) return;
 
-  const stream = data.streams[type];
+  const stream =
+    data.streams[type];
 
-  if (!stream) {
+  if(!stream){
     messageBox.textContent =
       type === "back"
-        ? "Back camera is not available on this device."
+        ? "Back camera is not available."
         : "Front camera is not available.";
 
     return;
@@ -182,223 +256,383 @@ backBtn.onclick = () => {
   showCamera("back");
 };
 
-function startPeer(cameraId) {
-  if (peers.has(cameraId)) return;
+/* FULL SCREEN BUTTON */
+fullscreenBtn.onclick = async () => {
+  try{
 
-  activeCameraId = cameraId;
+    if(!document.fullscreenElement){
 
-  cameraStreams.set(cameraId, {
-    streams: {
-      front: null,
-      back: null
-    },
-    available: {
-      front: false,
-      back: false
+      await videoPanel.requestFullscreen();
+
+    }else{
+
+      await document.exitFullscreen();
+
     }
-  });
 
-  const pc = new RTCPeerConnection({
-    iceServers: [
-      {
-        urls:
-          "stun:stun.l.google.com:19302"
+  }catch(err){
+
+    console.error(
+      "Fullscreen error:",
+      err
+    );
+
+    /* iPhone/iOS fallback */
+    if(
+      remoteVideo.webkitEnterFullscreen
+    ){
+      remoteVideo.webkitEnterFullscreen();
+    }
+  }
+};
+
+/* Update fullscreen icon */
+document.addEventListener(
+  "fullscreenchange",
+  () => {
+
+    if(document.fullscreenElement){
+
+      fullscreenBtn.textContent = "×";
+      fullscreenBtn.title =
+        "Exit Full Screen";
+
+    }else{
+
+      fullscreenBtn.textContent = "⛶";
+      fullscreenBtn.title =
+        "Full Screen";
+
+    }
+  }
+);
+
+function startPeer(cameraId){
+
+  if(peers.has(cameraId)){
+    return;
+  }
+
+  activeCameraId =
+    cameraId;
+
+  cameraStreams.set(
+    cameraId,
+    {
+      streams:{
+        front:null,
+        back:null
+      },
+
+      available:{
+        front:false,
+        back:false
       }
-    ]
-  });
+    }
+  );
 
-  peers.set(cameraId, pc);
+  const pc =
+    new RTCPeerConnection({
+      iceServers:[
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+      ]
+    });
+
+  peers.set(
+    cameraId,
+    pc
+  );
 
   pendingCandidates.set(
     cameraId,
     []
   );
 
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      send({
-        type: "candidate",
-        candidate: event.candidate,
-        cameraId
-      });
-    }
-  };
+  pc.onicecandidate =
+    event => {
 
-  /*
-    Track event order corresponds to the
-    sender transceiver order:
+      if(event.candidate){
 
-    first = Front
-    second = Back
-  */
+        send({
+          type:"candidate",
+          candidate:event.candidate,
+          cameraId
+        });
+
+      }
+    };
 
   let trackIndex = 0;
 
-  pc.ontrack = event => {
-    const type =
-      trackIndex === 0
-        ? "front"
-        : "back";
+  pc.ontrack =
+    event => {
 
-    trackIndex++;
+      const type =
+        trackIndex === 0
+          ? "front"
+          : "back";
 
-    const data =
-      cameraStreams.get(cameraId);
+      trackIndex++;
 
-    if (!data) return;
+      const data =
+        cameraStreams.get(
+          cameraId
+        );
 
-    data.streams[type] =
-      event.streams[0];
+      if(!data) return;
 
-    data.available[type] = true;
+      data.streams[type] =
+        event.streams[0];
 
-    updateButtons(cameraId);
+      data.available[type] =
+        true;
 
-    /*
-      Automatically show Front first.
-    */
+      updateButtons(
+        cameraId
+      );
 
-    if (
-      type === "front" &&
-      !remoteVideo.srcObject
-    ) {
-      showCamera("front");
-    }
-  };
+      if(
+        type === "front" &&
+        !remoteVideo.srcObject
+      ){
+
+        showCamera("front");
+
+      }
+    };
 
   send({
-    type: "viewer-ready",
+    type:"viewer-ready",
     cameraId
   });
 }
 
-ws.onmessage = async event => {
-  let msg;
+ws.onmessage =
+  async event => {
 
-  try {
-    msg = JSON.parse(event.data);
-  } catch {
-    return;
-  }
+    let msg;
 
-  if (msg.type === "role") {
-    status.textContent =
-      "🟡 Viewer connected";
+    try{
 
-    if (Array.isArray(msg.cameras)) {
-      msg.cameras.forEach(
-        cameraId => {
-          startPeer(cameraId);
-        }
-      );
+      msg =
+        JSON.parse(
+          event.data
+        );
+
+    }catch{
+
+      return;
+
     }
 
-    return;
-  }
-
-  if (msg.type === "camera-online") {
-    startPeer(msg.cameraId);
-
-    status.textContent =
-      "🟡 Camera connected";
-
-    return;
-  }
-
-  if (msg.type === "camera-live") {
-    status.textContent =
-      "🟢 Camera LIVE";
-
-    return;
-  }
-
-  if (msg.type === "camera-offline") {
-    const pc =
-      peers.get(msg.cameraId);
-
-    if (pc) pc.close();
-
-    peers.delete(msg.cameraId);
-    cameraStreams.delete(msg.cameraId);
-
-    if (activeCameraId === msg.cameraId) {
-      activeCameraId = null;
-      remoteVideo.srcObject = null;
-
-      frontBtn.disabled = true;
-      backBtn.disabled = true;
+    if(msg.type === "role"){
 
       status.textContent =
-        "🔴 Camera offline";
+        "🟡 Viewer connected";
+
+      if(
+        Array.isArray(
+          msg.cameras
+        )
+      ){
+
+        msg.cameras.forEach(
+          startPeer
+        );
+
+      }
+
+      return;
     }
 
-    return;
-  }
+    if(
+      msg.type ===
+      "camera-online"
+    ){
 
-  if (msg.type === "offer") {
-    const cameraId = msg.cameraId;
+      startPeer(
+        msg.cameraId
+      );
 
-    if (!peers.has(cameraId)) {
-      startPeer(cameraId);
+      status.textContent =
+        "🟡 Camera connected";
+
+      return;
     }
 
-    const pc = peers.get(cameraId);
+    if(
+      msg.type ===
+      "camera-live"
+    ){
 
-    await pc.setRemoteDescription(
-      msg.offer
-    );
+      status.textContent =
+        "🟢 Camera LIVE";
 
-    const queued =
-      pendingCandidates.get(cameraId) || [];
-
-    for (const candidate of queued) {
-      await pc
-        .addIceCandidate(candidate)
-        .catch(() => {});
+      return;
     }
 
-    pendingCandidates.set(
-      cameraId,
-      []
-    );
+    if(
+      msg.type ===
+      "camera-offline"
+    ){
 
-    const answer =
-      await pc.createAnswer();
+      const pc =
+        peers.get(
+          msg.cameraId
+        );
 
-    await pc.setLocalDescription(answer);
+      if(pc){
+        pc.close();
+      }
 
-    send({
-      type: "answer",
-      answer: pc.localDescription,
-      cameraId
-    });
+      peers.delete(
+        msg.cameraId
+      );
 
-    return;
-  }
+      cameraStreams.delete(
+        msg.cameraId
+      );
 
-  if (msg.type === "candidate") {
-    const pc = peers.get(msg.cameraId);
+      if(
+        activeCameraId ===
+        msg.cameraId
+      ){
 
-    if (!pc || !msg.candidate) return;
+        activeCameraId =
+          null;
 
-    if (pc.remoteDescription) {
-      await pc
-        .addIceCandidate(msg.candidate)
-        .catch(() => {});
-    } else {
-      const queue =
-        pendingCandidates.get(msg.cameraId);
+        remoteVideo.srcObject =
+          null;
 
-      if (queue) {
-        queue.push(msg.candidate);
+        frontBtn.disabled =
+          true;
+
+        backBtn.disabled =
+          true;
+
+        status.textContent =
+          "🔴 Camera offline";
+      }
+
+      return;
+    }
+
+    if(msg.type === "offer"){
+
+      const cameraId =
+        msg.cameraId;
+
+      if(
+        !peers.has(
+          cameraId
+        )
+      ){
+
+        startPeer(
+          cameraId
+        );
+
+      }
+
+      const pc =
+        peers.get(
+          cameraId
+        );
+
+      await pc.setRemoteDescription(
+        msg.offer
+      );
+
+      const queued =
+        pendingCandidates.get(
+          cameraId
+        ) || [];
+
+      for(
+        const candidate
+        of queued
+      ){
+
+        await pc
+          .addIceCandidate(
+            candidate
+          )
+          .catch(() => {});
+
+      }
+
+      pendingCandidates.set(
+        cameraId,
+        []
+      );
+
+      const answer =
+        await pc.createAnswer();
+
+      await pc.setLocalDescription(
+        answer
+      );
+
+      send({
+        type:"answer",
+        answer:
+          pc.localDescription,
+        cameraId
+      });
+
+      return;
+    }
+
+    if(msg.type === "candidate"){
+
+      const pc =
+        peers.get(
+          msg.cameraId
+        );
+
+      if(
+        !pc ||
+        !msg.candidate
+      ){
+
+        return;
+
+      }
+
+      if(
+        pc.remoteDescription
+      ){
+
+        await pc
+          .addIceCandidate(
+            msg.candidate
+          )
+          .catch(() => {});
+
+      }else{
+
+        const queue =
+          pendingCandidates.get(
+            msg.cameraId
+          );
+
+        if(queue){
+          queue.push(
+            msg.candidate
+          );
+        }
       }
     }
-  }
-};
+  };
 
 ws.onclose = () => {
+
   status.textContent =
     "🔴 Viewer connection closed";
+
 };
 </script>
 
