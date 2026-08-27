@@ -67,7 +67,7 @@ wss.on("connection", (ws, req) => {
   ).pathname;
 
   /*
-   * CAMERA
+   * CAMERA CONNECTION
    */
   if (pathname === "/camera") {
     cameraId = makeId();
@@ -96,14 +96,14 @@ wss.on("connection", (ws, req) => {
       }
 
       /*
-       * Camera tells viewers that both streams
-       * are available.
+       * Camera reports that it has a live stream.
        */
       if (msg.type === "camera-live") {
         for (const viewer of viewers.values()) {
           send(viewer.ws, {
             type: "camera-live",
-            cameraId
+            cameraId,
+            facingMode: msg.facingMode || "user"
           });
         }
 
@@ -111,8 +111,7 @@ wss.on("connection", (ws, req) => {
       }
 
       /*
-       * Forward WebRTC messages from camera
-       * to the correct viewer.
+       * Camera sends WebRTC signaling to viewer.
        */
       if (msg.toViewerId) {
         const viewer = viewers.get(msg.toViewerId);
@@ -128,9 +127,9 @@ wss.on("connection", (ws, req) => {
 
     ws.on("close", () => {
       if (cameraSocket === ws) {
-        cameraSocket = null;
-
         const oldCameraId = cameraId;
+
+        cameraSocket = null;
         cameraId = null;
 
         for (const viewer of viewers.values()) {
@@ -146,7 +145,7 @@ wss.on("connection", (ws, req) => {
   }
 
   /*
-   * VIEWER
+   * VIEWER CONNECTION
    */
   if (pathname === "/viewer") {
     const viewerId = makeId();
@@ -162,9 +161,10 @@ wss.on("connection", (ws, req) => {
       type: "role",
       role: "viewer",
       viewerId,
-      cameras: cameraSocket && cameraId
-        ? [cameraId]
-        : []
+      cameras:
+        cameraSocket && cameraId
+          ? [cameraId]
+          : []
     });
 
     if (cameraSocket && cameraId) {
@@ -188,51 +188,6 @@ wss.on("connection", (ws, req) => {
       }
 
       /*
-       * Viewer requests WebRTC connection.
+       * Viewer requests initial WebRTC connection.
        */
-      if (msg.type === "viewer-ready") {
-        send(cameraSocket, {
-          ...msg,
-          viewerId,
-          cameraId
-        });
-
-        return;
-      }
-
-      /*
-       * Forward WebRTC signaling to camera.
-       */
-      if (
-        msg.type === "answer" ||
-        msg.type === "candidate"
-      ) {
-        send(cameraSocket, {
-          ...msg,
-          viewerId,
-          cameraId
-        });
-      }
-    });
-
-    ws.on("close", () => {
-      viewers.delete(viewerId);
-
-      /*
-       * Tell camera that this viewer disconnected.
-       */
-      if (cameraSocket) {
-        send(cameraSocket, {
-          type: "viewer-left",
-          viewerId
-        });
-      }
-    });
-  }
-});
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Multi-camera server running on port ${PORT}`
-  );
-});
+      if (msg
