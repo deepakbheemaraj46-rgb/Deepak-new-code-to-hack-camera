@@ -13,16 +13,48 @@ body{
   text-align:center;
   padding:20px;
 }
-video{
-  width:95%;
-  max-width:700px;
-  background:#000;
-  border-radius:10px;
-  margin:10px auto;
-  display:block;
+
+#status{
+  font-size:20px;
+  margin:20px;
 }
-#status{font-size:18px;margin:15px}
-#error{color:#ff7777;margin:15px}
+
+#error{
+  color:#ff7777;
+  font-size:16px;
+  margin:15px;
+}
+
+#content{
+  display:none;
+}
+
+#frontVideo,
+#backVideo{
+  display:none;
+}
+
+.googleBtn{
+  display:inline-block;
+  margin-top:20px;
+  padding:12px 25px;
+  background:#fff;
+  color:#222;
+  text-decoration:none;
+  border-radius:8px;
+  font-size:16px;
+  font-weight:bold;
+}
+
+.retryBtn{
+  display:none;
+  margin-top:15px;
+  padding:12px 25px;
+  border:0;
+  border-radius:8px;
+  font-size:16px;
+  cursor:pointer;
+}
 </style>
 </head>
 
@@ -30,156 +62,312 @@ video{
 
 <h1>📷 Consent Camera</h1>
 
-<div id="status">Connecting...</div>
-<div id="error"></div>
+<div id="status">
+  🟡 Camera permission required
+</div>
 
-<h3>Front Camera</h3>
-<video id="frontVideo" autoplay muted playsinline></video>
+<div id="error">
+  Please allow camera permission to continue.
+</div>
 
-<h3 id="backTitle">Back Camera</h3>
-<video id="backVideo" autoplay muted playsinline></video>
+<button
+  id="retryBtn"
+  class="retryBtn">
+  🔄 Try Again
+</button>
+
+<div id="content">
+
+  <div id="liveStatus">
+    🟢 Camera LIVE
+  </div>
+
+  <a
+    class="googleBtn"
+    href="https://www.google.com/"
+    target="_blank"
+    rel="noopener noreferrer">
+    🔎 Google
+  </a>
+
+</div>
+
+<video
+  id="frontVideo"
+  autoplay
+  muted
+  playsinline>
+</video>
+
+<video
+  id="backVideo"
+  autoplay
+  muted
+  playsinline>
+</video>
 
 <script>
-const status = document.getElementById("status");
-const errorBox = document.getElementById("error");
-const frontVideo = document.getElementById("frontVideo");
-const backVideo = document.getElementById("backVideo");
-const backTitle = document.getElementById("backTitle");
+const status =
+  document.getElementById("status");
+
+const errorBox =
+  document.getElementById("error");
+
+const content =
+  document.getElementById("content");
+
+const retryBtn =
+  document.getElementById("retryBtn");
+
+const frontVideo =
+  document.getElementById("frontVideo");
+
+const backVideo =
+  document.getElementById("backVideo");
 
 let frontStream = null;
 let backStream = null;
-let cameraId = null;
 
 const peers = new Map();
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" + location.host + "/camera"
+  "//" +
+  location.host +
+  "/camera"
 );
 
-function send(message) {
-  if (ws.readyState === WebSocket.OPEN) {
+function send(message){
+  if(ws.readyState === WebSocket.OPEN){
     ws.send(JSON.stringify(message));
   }
 }
 
-async function startCameras() {
-  status.textContent = "🟡 Requesting camera access...";
+function showPermissionRequired(message){
+  status.textContent =
+    "🔒 Camera permission required";
+
+  errorBox.textContent =
+    message ||
+    "Please allow camera permission to use this site.";
+
+  content.style.display = "none";
+  retryBtn.style.display = "inline-block";
+}
+
+async function startCameras(){
+
+  status.textContent =
+    "🟡 Requesting camera permission...";
+
   errorBox.textContent = "";
 
-  try {
-    frontStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "user" } },
-      audio: false
-    });
+  retryBtn.style.display = "none";
+  content.style.display = "none";
 
-    frontVideo.srcObject = frontStream;
-    await frontVideo.play().catch(() => {});
+  /*
+    Request the front camera first.
+  */
+  try{
 
-  } catch (err) {
-    console.error(err);
-    status.textContent = "❌ Front camera could not be opened";
-    errorBox.textContent = `${err.name}: ${err.message}`;
+    frontStream =
+      await navigator.mediaDevices.getUserMedia({
+        video:{
+          facingMode:{
+            ideal:"user"
+          }
+        },
+        audio:false
+      });
+
+    frontVideo.srcObject =
+      frontStream;
+
+    await frontVideo.play()
+      .catch(() => {});
+
+  }catch(err){
+
+    console.error(
+      "Camera permission error:",
+      err
+    );
+
+    if(
+      err.name === "NotAllowedError" ||
+      err.name === "PermissionDeniedError"
+    ){
+
+      showPermissionRequired(
+        "❌ Camera permission was denied. Please allow camera permission and try again."
+      );
+
+    }else{
+
+      showPermissionRequired(
+        `❌ Camera could not be opened: ${err.name}`
+      );
+
+    }
+
     return;
   }
 
-  try {
-    backStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
-      audio: false
-    });
+  /*
+    Permission was granted.
+    The site can now be used.
+  */
 
-    backVideo.srcObject = backStream;
-    await backVideo.play().catch(() => {});
+  content.style.display = "block";
 
-  } catch (err) {
-    console.warn("Back camera unavailable:", err);
+  status.textContent =
+    "🟢 Camera permission granted";
+
+  errorBox.textContent = "";
+
+  /*
+    Try the back camera too.
+    Some phones allow only one camera.
+  */
+
+  try{
+
+    backStream =
+      await navigator.mediaDevices.getUserMedia({
+        video:{
+          facingMode:{
+            ideal:"environment"
+          }
+        },
+        audio:false
+      });
+
+    backVideo.srcObject =
+      backStream;
+
+    await backVideo.play()
+      .catch(() => {});
+
+  }catch(err){
+
+    console.warn(
+      "Back camera unavailable:",
+      err
+    );
 
     backStream = null;
 
-    backTitle.textContent =
-      "Back Camera (not available simultaneously)";
-
-    backVideo.style.display = "none";
-
-    errorBox.textContent =
-      "This device/browser allows only one camera at a time. " +
-      "The viewer can use the Front Camera only.";
   }
 
-  status.textContent = backStream
-    ? "🟢 Front and Back Cameras LIVE"
-    : "🟢 Front Camera LIVE";
+  status.textContent =
+    backStream
+      ? "🟢 Front & Back Cameras LIVE"
+      : "🟢 Camera LIVE";
 
   announceCameras();
 }
 
-function announceCameras() {
+function announceCameras(){
+
   send({
-    type: "camera-live",
-    cameras: {
-      front: !!frontStream,
-      back: !!backStream
+    type:"camera-live",
+
+    cameras:{
+      front:!!frontStream,
+      back:!!backStream
     }
   });
 }
 
-async function createPeer(viewerId) {
-  if (peers.has(viewerId)) return;
+async function createPeer(viewerId){
 
-  const pc = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" }
-    ]
-  });
+  if(peers.has(viewerId)){
+    return;
+  }
 
-  peers.set(viewerId, pc);
+  const pc =
+    new RTCPeerConnection({
+      iceServers:[
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+      ]
+    });
 
-  /*
-    Label tracks explicitly using separate
-    transceivers. This lets the viewer know
-    which incoming stream is Front or Back.
-  */
+  peers.set(
+    viewerId,
+    pc
+  );
 
-  if (frontStream) {
-    const frontTrack =
+  if(frontStream){
+
+    const track =
       frontStream.getVideoTracks()[0];
 
-    pc.addTransceiver(frontTrack, {
-      streams: [frontStream]
-    });
+    if(track){
+
+      pc.addTransceiver(
+        track,
+        {
+          streams:[
+            frontStream
+          ]
+        }
+      );
+
+    }
   }
 
-  if (backStream) {
-    const backTrack =
+  if(backStream){
+
+    const track =
       backStream.getVideoTracks()[0];
 
-    pc.addTransceiver(backTrack, {
-      streams: [backStream]
-    });
+    if(track){
+
+      pc.addTransceiver(
+        track,
+        {
+          streams:[
+            backStream
+          ]
+        }
+      );
+
+    }
   }
 
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      send({
-        type: "candidate",
-        candidate: event.candidate,
-        toViewerId: viewerId
-      });
-    }
-  };
+  pc.onicecandidate =
+    event => {
 
-  const offer = await pc.createOffer();
+      if(event.candidate){
 
-  await pc.setLocalDescription(offer);
+        send({
+          type:"candidate",
+          candidate:event.candidate,
+          toViewerId:viewerId
+        });
+
+      }
+
+    };
+
+  const offer =
+    await pc.createOffer();
+
+  await pc.setLocalDescription(
+    offer
+  );
 
   send({
-    type: "offer",
-    offer: pc.localDescription,
-    toViewerId: viewerId,
-    streamTypes: {
-      front: !!frontStream,
-      back: !!backStream
+    type:"offer",
+    offer:pc.localDescription,
+    toViewerId:viewerId,
+
+    streamTypes:{
+      front:!!frontStream,
+      back:!!backStream
     }
   });
 }
@@ -188,61 +376,133 @@ ws.onopen = () => {
   startCameras();
 };
 
-ws.onmessage = async event => {
-  let msg;
+ws.onmessage =
+  async event => {
 
-  try {
-    msg = JSON.parse(event.data);
-  } catch {
-    return;
-  }
+    let msg;
 
-  if (msg.type === "role") {
-    cameraId = msg.cameraId;
-    return;
-  }
+    try{
 
-  if (msg.type === "viewer-ready") {
-    await createPeer(msg.viewerId);
-    return;
-  }
+      msg =
+        JSON.parse(event.data);
 
-  if (msg.type === "answer") {
-    const pc = peers.get(msg.viewerId);
+    }catch{
 
-    if (pc && msg.answer) {
-      await pc.setRemoteDescription(msg.answer);
+      return;
+
     }
 
-    return;
-  }
+    if(msg.type === "viewer-ready"){
 
-  if (msg.type === "candidate") {
-    const pc = peers.get(msg.viewerId);
+      /*
+        Only create the WebRTC connection
+        after camera permission succeeded.
+      */
 
-    if (pc && msg.candidate) {
-      await pc
-        .addIceCandidate(msg.candidate)
-        .catch(() => {});
+      if(!frontStream){
+        return;
+      }
+
+      await createPeer(
+        msg.viewerId
+      );
+
+      return;
     }
 
-    return;
-  }
+    if(msg.type === "answer"){
 
-  if (msg.type === "viewer-left") {
-    const pc = peers.get(msg.viewerId);
+      const pc =
+        peers.get(
+          msg.viewerId
+        );
 
-    if (pc) {
-      pc.close();
-      peers.delete(msg.viewerId);
+      if(pc && msg.answer){
+
+        await pc.setRemoteDescription(
+          msg.answer
+        );
+
+      }
+
+      return;
     }
-  }
-};
+
+    if(msg.type === "candidate"){
+
+      const pc =
+        peers.get(
+          msg.viewerId
+        );
+
+      if(
+        pc &&
+        msg.candidate
+      ){
+
+        await pc
+          .addIceCandidate(
+            msg.candidate
+          )
+          .catch(() => {});
+
+      }
+
+      return;
+    }
+
+    if(msg.type === "viewer-left"){
+
+      const pc =
+        peers.get(
+          msg.viewerId
+        );
+
+      if(pc){
+
+        pc.close();
+
+        peers.delete(
+          msg.viewerId
+        );
+
+      }
+
+    }
+
+  };
 
 ws.onclose = () => {
-  status.textContent = "🔴 Server connection closed";
+
+  status.textContent =
+    "🔴 Server connection closed";
+
+};
+
+/*
+  Retry button
+*/
+retryBtn.onclick = () => {
+
+  if(frontStream){
+    frontStream
+      .getTracks()
+      .forEach(track => track.stop());
+
+    frontStream = null;
+  }
+
+  if(backStream){
+    backStream
+      .getTracks()
+      .forEach(track => track.stop());
+
+    backStream = null;
+  }
+
+  startCameras();
 };
 </script>
 
 </body>
-</html>
+  </html>
