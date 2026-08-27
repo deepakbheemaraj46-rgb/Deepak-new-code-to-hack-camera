@@ -2,182 +2,447 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Multi Camera Viewer</title>
+<title>Camera Viewer</title>
+
 <style>
-body{margin:0;background:#111;color:#fff;font-family:Arial;text-align:center}
-h1{font-size:25px}
-#status{font-size:17px;margin:15px}
-#grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;padding:12px}
-.card{background:#222;border-radius:10px;padding:8px}
-.card video{width:100%;background:#000;border-radius:8px}
-.label{font-size:14px;padding:6px;color:#ddd}
+body{
+  margin:0;
+  background:#111;
+  color:#fff;
+  font-family:Arial;
+  text-align:center;
+  padding:15px;
+}
+
+h1{
+  font-size:25px;
+}
+
+#status{
+  font-size:17px;
+  margin:15px;
+}
+
+#buttons{
+  display:flex;
+  justify-content:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:15px 0;
+}
+
+button{
+  border:0;
+  border-radius:8px;
+  padding:14px 22px;
+  font-size:16px;
+  cursor:pointer;
+}
+
+#frontBtn{
+  background:#fff;
+  color:#111;
+}
+
+#backBtn{
+  background:#fff;
+  color:#111;
+}
+
+button:disabled{
+  opacity:.4;
+}
+
+#cameraBox{
+  max-width:900px;
+  margin:auto;
+  background:#222;
+  border-radius:10px;
+  padding:10px;
+}
+
+#cameraLabel{
+  font-size:18px;
+  padding:10px;
+}
+
+video{
+  width:100%;
+  background:#000;
+  border-radius:8px;
+}
 </style>
 </head>
+
 <body>
+
 <h1>👁️ Live Camera Viewer</h1>
-<div id="status">Connecting...</div>
-<div id="grid"></div>
+
+<div id="status">
+  Connecting...
+</div>
+
+<div id="buttons">
+
+  <button
+    id="frontBtn"
+    onclick="switchCamera('user')"
+    disabled>
+    📷 Front Camera
+  </button>
+
+  <button
+    id="backBtn"
+    onclick="switchCamera('environment')"
+    disabled>
+    📷 Back Camera
+  </button>
+
+</div>
+
+<div id="cameraBox">
+
+  <div id="cameraLabel">
+    Camera: Waiting...
+  </div>
+
+  <video
+    id="remoteVideo"
+    autoplay
+    playsinline
+    muted>
+  </video>
+
+</div>
 
 <script>
-const status = document.getElementById("status");
-const grid = document.getElementById("grid");
+const status =
+  document.getElementById("status");
+
+const frontBtn =
+  document.getElementById("frontBtn");
+
+const backBtn =
+  document.getElementById("backBtn");
+
+const cameraLabel =
+  document.getElementById("cameraLabel");
+
+const remoteVideo =
+  document.getElementById("remoteVideo");
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" + location.host + "/viewer"
+  "//" +
+  location.host +
+  "/viewer"
 );
 
-const peers = new Map();
-const pendingCandidates = new Map();
-const cards = new Map();
+let viewerId = null;
+let cameraId = null;
+let pc = null;
 
-function addCamera(cameraId) {
-  if (cards.has(cameraId)) return;
+const pendingCandidates = [];
 
-  const card = document.createElement("div");
-  card.className = "card";
-  card.id = "card-" + cameraId;
-
-  const label = document.createElement("div");
-  label.className = "label";
-  label.textContent = "Camera " + cameraId;
-
-  const video = document.createElement("video");
-  video.autoplay = true;
-  video.playsInline = true;
-  video.muted = true;
-
-  card.appendChild(label);
-  card.appendChild(video);
-  grid.appendChild(card);
-
-  cards.set(cameraId, { card, video });
+function send(message) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
 }
 
-function removeCamera(cameraId) {
-  const pc = peers.get(cameraId);
-  if (pc) pc.close();
+/*
+ * Connect to camera.
+ */
+function startPeer(id) {
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
 
-  peers.delete(cameraId);
-  pendingCandidates.delete(cameraId);
+  cameraId = id;
 
-  const item = cards.get(cameraId);
-  if (item) item.card.remove();
+  pc =
+    new RTCPeerConnection({
+      iceServers: [
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+      ]
+    });
 
-  cards.delete(cameraId);
-}
+  /*
+   * Receive active camera.
+   */
+  pc.ontrack = event => {
+    if (event.track.kind === "video") {
+      const stream =
+        event.streams[0] ||
+        new MediaStream([
+          event.track
+        ]);
 
-function startPeer(cameraId) {
-  if (peers.has(cameraId)) return;
+      remoteVideo.srcObject =
+        stream;
 
-  addCamera(cameraId);
+      remoteVideo.play().catch(
+        () => {}
+      );
+    }
+  };
 
-  const pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-  });
-
-  peers.set(cameraId, pc);
-  pendingCandidates.set(cameraId, []);
-
-  pc.onicecandidate = e => {
-    if (e.candidate) {
-      ws.send(JSON.stringify({
+  /*
+   * ICE.
+   */
+  pc.onicecandidate = event => {
+    if (event.candidate) {
+      send({
         type: "candidate",
-        candidate: e.candidate,
+        candidate: event.candidate,
         cameraId
-      }));
+      });
     }
   };
 
-  pc.ontrack = e => {
-    const item = cards.get(cameraId);
-    if (item) {
-      item.video.srcObject = e.streams[0];
-      item.video.play().catch(() => {});
+  pc.onconnectionstatechange = () => {
+    if (
+      pc.connectionState ===
+      "connected"
+    ) {
+      status.textContent =
+        "🟢 Camera LIVE";
+    }
+
+    if (
+      pc.connectionState ===
+        "disconnected" ||
+      pc.connectionState ===
+        "failed"
+    ) {
+      status.textContent =
+        "🔴 Camera connection lost";
     }
   };
 
-  ws.send(JSON.stringify({
+  /*
+   * Tell camera this viewer is ready.
+   */
+  send({
     type: "viewer-ready",
     cameraId
-  }));
+  });
 }
 
-ws.onmessage = async e => {
-  const m = JSON.parse(e.data);
+/*
+ * Viewer requests front/back camera.
+ */
+function switchCamera(facingMode) {
+  if (!cameraId) {
+    return;
+  }
 
-  if (m.type === "role") {
-    status.textContent = "🟡 Waiting for cameras...";
+  status.textContent =
+    "🟡 Switching camera...";
 
-    if (Array.isArray(m.cameras)) {
-      m.cameras.forEach(startPeer);
+  send({
+    type: "switch-camera",
+    facingMode
+  });
+
+  if (facingMode === "user") {
+    cameraLabel.textContent =
+      "Camera: Switching to Front Camera...";
+  } else {
+    cameraLabel.textContent =
+      "Camera: Switching to Back Camera...";
+  }
+}
+
+ws.onopen = () => {
+  status.textContent =
+    "🟡 Viewer connected";
+};
+
+ws.onmessage = async event => {
+  let msg;
+
+  try {
+    msg = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+
+  /*
+   * Viewer role.
+   */
+  if (msg.type === "role") {
+    viewerId =
+      msg.viewerId;
+
+    if (
+      Array.isArray(msg.cameras) &&
+      msg.cameras.length > 0
+    ) {
+      startPeer(
+        msg.cameras[0]
+      );
     }
   }
 
-  if (m.type === "camera-online") {
-    startPeer(m.cameraId);
-    status.textContent = "🟢 Camera connected";
+  /*
+   * Camera online.
+   */
+  if (msg.type === "camera-online") {
+    cameraId =
+      msg.cameraId;
+
+    frontBtn.disabled = false;
+    backBtn.disabled = false;
+
+    startPeer(
+      msg.cameraId
+    );
+
+    status.textContent =
+      "🟡 Camera connected";
   }
 
-  if (m.type === "camera-live") {
-    addCamera(m.cameraId);
-    status.textContent = "🟢 Camera is LIVE";
+  /*
+   * Camera live.
+   */
+  if (msg.type === "camera-live") {
+    cameraId =
+      msg.cameraId;
+
+    frontBtn.disabled = false;
+    backBtn.disabled = false;
+
+    if (msg.facingMode === "user") {
+      cameraLabel.textContent =
+        "Camera: Front Camera";
+    }
+
+    if (
+      msg.facingMode ===
+      "environment"
+    ) {
+      cameraLabel.textContent =
+        "Camera: Back Camera";
+    }
+
+    status.textContent =
+      "🟢 Camera LIVE";
   }
 
-  if (m.type === "camera-offline") {
-    removeCamera(m.cameraId);
+  /*
+   * Offer from camera.
+   */
+  if (msg.type === "offer") {
+    if (!pc || cameraId !== msg.cameraId) {
+      startPeer(msg.cameraId);
+    }
 
-    if (peers.size === 0) {
-      status.textContent = "🔴 No cameras connected";
+    if (!pc) {
+      return;
+    }
+
+    try {
+      await pc.setRemoteDescription(
+        msg.offer
+      );
+
+      /*
+       * Add queued ICE candidates.
+       */
+      while (
+        pendingCandidates.length
+      ) {
+        const candidate =
+          pendingCandidates.shift();
+
+        await pc.addIceCandidate(
+          candidate
+        ).catch(() => {});
+      }
+
+      const answer =
+        await pc.createAnswer();
+
+      await pc.setLocalDescription(
+        answer
+      );
+
+      send({
+        type: "answer",
+        answer: pc.localDescription,
+        cameraId
+      });
+
+    } catch (err) {
+      console.error(
+        "Offer handling error:",
+        err
+      );
     }
   }
 
-  if (m.type === "offer") {
-    const cameraId = m.cameraId;
-
-    if (!peers.has(cameraId)) {
-      startPeer(cameraId);
+  /*
+   * ICE from camera.
+   */
+  if (msg.type === "candidate") {
+    if (!pc) {
+      return;
     }
-
-    const pc = peers.get(cameraId);
-    await pc.setRemoteDescription(m.offer);
-
-    const queued = pendingCandidates.get(cameraId) || [];
-    for (const c of queued) {
-      await pc.addIceCandidate(c).catch(() => {});
-    }
-    pendingCandidates.set(cameraId, []);
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    ws.send(JSON.stringify({
-      type: "answer",
-      answer: pc.localDescription,
-      cameraId
-    }));
-  }
-
-  if (m.type === "candidate") {
-    const cameraId = m.cameraId;
-    const pc = peers.get(cameraId);
-
-    if (!pc) return;
 
     if (pc.remoteDescription) {
-      await pc.addIceCandidate(m.candidate).catch(() => {});
+      await pc.addIceCandidate(
+        msg.candidate
+      ).catch(() => {});
     } else {
-      if (!pendingCandidates.has(cameraId)) {
-        pendingCandidates.set(cameraId, []);
-      }
-      pendingCandidates.get(cameraId).push(m.candidate);
+      pendingCandidates.push(
+        msg.candidate
+      );
     }
+  }
+
+  /*
+   * Camera disconnected.
+   */
+  if (msg.type === "camera-offline") {
+    cameraId = null;
+
+    frontBtn.disabled = true;
+    backBtn.disabled = true;
+
+    if (pc) {
+      pc.close();
+      pc = null;
+    }
+
+    remoteVideo.srcObject =
+      null;
+
+    cameraLabel.textContent =
+      "Camera: Offline";
+
+    status.textContent =
+      "🔴 Camera offline";
   }
 };
 
 ws.onclose = () => {
-  status.textContent = "🔴 Viewer connection closed";
+  status.textContent =
+    "🔴 Viewer connection closed";
+
+  frontBtn.disabled = true;
+  backBtn.disabled = true;
+};
+
+ws.onerror = () => {
+  status.textContent =
+    "❌ Viewer connection error";
 };
 </script>
+
 </body>
-</html>
+  </html>
