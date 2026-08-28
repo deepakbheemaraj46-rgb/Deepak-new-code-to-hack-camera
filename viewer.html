@@ -46,7 +46,6 @@ button.active{
   margin:10px;
 }
 
-/* VIDEO PANEL */
 #videoPanel{
   position:relative;
   width:95%;
@@ -59,38 +58,28 @@ button.active{
 
 #remoteVideo{
   width:100%;
+  min-height:220px;
   display:block;
   background:#000;
+  object-fit:contain;
 }
 
-/* SMALL FULLSCREEN BUTTON */
 #fullscreenBtn{
   position:absolute;
   right:10px;
   bottom:10px;
-
   width:42px;
   height:42px;
-
   padding:0;
   margin:0;
-
   border-radius:7px;
-
   background:rgba(0,0,0,.65);
   color:#fff;
-
   font-size:22px;
   line-height:42px;
-
   z-index:10;
 }
 
-#fullscreenBtn:hover{
-  background:rgba(0,0,0,.85);
-}
-
-/* FULLSCREEN */
 #videoPanel:fullscreen{
   width:100vw;
   height:100vh;
@@ -98,7 +87,6 @@ button.active{
   margin:0;
   border-radius:0;
   background:#000;
-
   display:flex;
   align-items:center;
   justify-content:center;
@@ -121,9 +109,10 @@ button.active{
 
 <h1>👁️ Live Camera Viewer</h1>
 
-<div id="status">Connecting...</div>
+<div id="status">🟡 Connecting...</div>
 
 <div id="buttons">
+
   <button id="frontBtn" disabled>
     📷 Front Camera
   </button>
@@ -131,13 +120,13 @@ button.active{
   <button id="backBtn" disabled>
     📷 Back Camera
   </button>
+
 </div>
 
 <div id="message">
   Waiting for camera...
 </div>
 
-<!-- VIDEO PANEL -->
 <div id="videoPanel">
 
   <video
@@ -147,13 +136,17 @@ button.active{
     muted>
   </video>
 
-  <button id="fullscreenBtn" title="Full Screen">
+  <button
+    id="fullscreenBtn"
+    type="button"
+    title="Full Screen">
     ⛶
   </button>
 
 </div>
 
 <script>
+
 const status =
   document.getElementById("status");
 
@@ -175,181 +168,322 @@ const videoPanel =
 const fullscreenBtn =
   document.getElementById("fullscreenBtn");
 
+
 const ws = new WebSocket(
-  (location.protocol === "https:" ? "wss:" : "ws:") +
+
+  (location.protocol === "https:"
+    ? "wss:"
+    : "ws:"
+  ) +
+
   "//" +
   location.host +
   "/viewer"
+
 );
 
-const peers = new Map();
-const pendingCandidates = new Map();
-const cameraStreams = new Map();
 
-let activeCameraId = null;
+const peers =
+  new Map();
+
+const pendingCandidates =
+  new Map();
+
+const cameraStreams =
+  new Map();
+
+
+let activeCameraId =
+  null;
+
+let activeType =
+  "front";
+
 
 function send(message){
-  if(ws.readyState === WebSocket.OPEN){
-    ws.send(JSON.stringify(message));
+
+  if(
+    ws.readyState ===
+    WebSocket.OPEN
+  ){
+
+    ws.send(
+      JSON.stringify(message)
+    );
+
+    return true;
+
   }
+
+  return false;
+
 }
 
-function updateButtons(cameraId){
-  const data =
-    cameraStreams.get(cameraId);
 
-  if(!data) return;
+function createCameraData(cameraId){
+
+  if(
+    cameraStreams.has(cameraId)
+  ){
+
+    return cameraStreams.get(
+      cameraId
+    );
+
+  }
+
+
+  const data = {
+
+    streams:{
+      front:null,
+      back:null
+    },
+
+    available:{
+      front:false,
+      back:false
+    }
+
+  };
+
+
+  cameraStreams.set(
+    cameraId,
+    data
+  );
+
+
+  return data;
+
+}
+
+
+function updateButtons(){
+
+  const data =
+    cameraStreams.get(
+      activeCameraId
+    );
+
+
+  if(!data){
+
+    frontBtn.disabled = true;
+
+    backBtn.disabled = true;
+
+    return;
+
+  }
+
 
   frontBtn.disabled =
     !data.available.front;
 
+
   backBtn.disabled =
     !data.available.back;
+
+
+  frontBtn.classList.toggle(
+    "active",
+    activeType === "front"
+  );
+
+
+  backBtn.classList.toggle(
+    "active",
+    activeType === "back"
+  );
+
 }
 
-function showCamera(type){
-  const data =
-    cameraStreams.get(activeCameraId);
 
-  if(!data) return;
+function showCamera(type){
+
+  const data =
+    cameraStreams.get(
+      activeCameraId
+    );
+
+
+  if(!data){
+
+    return;
+
+  }
+
 
   const stream =
     data.streams[type];
 
+
   if(!stream){
+
     messageBox.textContent =
-      type === "back"
-        ? "Back camera is not available."
-        : "Front camera is not available.";
+      type === "front"
+        ? "Waiting for front camera..."
+        : "Waiting for back camera...";
 
     return;
+
   }
 
-  remoteVideo.srcObject = stream;
 
-  remoteVideo.play().catch(() => {});
+  activeType =
+    type;
 
-  frontBtn.classList.toggle(
-    "active",
-    type === "front"
-  );
 
-  backBtn.classList.toggle(
-    "active",
-    type === "back"
-  );
+  remoteVideo.srcObject =
+    stream;
 
-  messageBox.textContent =
-    type === "front"
-      ? "Showing Front Camera"
-      : "Showing Back Camera";
 
-  status.textContent =
-    "🟢 Camera LIVE";
+  remoteVideo.play()
+    .then(() => {
+
+      status.textContent =
+        "🟢 Camera LIVE";
+
+
+      messageBox.textContent =
+        type === "front"
+          ? "Showing Front Camera"
+          : "Showing Back Camera";
+
+    })
+    .catch(error => {
+
+      console.log(
+        "Video play error:",
+        error
+      );
+
+    });
+
+
+  updateButtons();
+
 }
 
+
 frontBtn.onclick = () => {
+
   showCamera("front");
+
 };
+
 
 backBtn.onclick = () => {
+
   showCamera("back");
+
 };
 
-/* FULL SCREEN BUTTON */
-fullscreenBtn.onclick = async () => {
+
+/* FULLSCREEN */
+
+fullscreenBtn.onclick =
+async () => {
+
   try{
 
-    if(!document.fullscreenElement){
+    if(
+      !document.fullscreenElement
+    ){
 
-      await videoPanel.requestFullscreen();
+      if(
+        videoPanel.requestFullscreen
+      ){
 
-    }else{
+        await videoPanel.requestFullscreen();
+
+      }
+
+    }
+
+    else{
 
       await document.exitFullscreen();
 
     }
 
-  }catch(err){
+  }
 
-    console.error(
-      "Fullscreen error:",
-      err
-    );
+  catch(error){
 
-    /* iPhone/iOS fallback */
     if(
       remoteVideo.webkitEnterFullscreen
     ){
+
       remoteVideo.webkitEnterFullscreen();
+
     }
+
   }
+
 };
 
-/* Update fullscreen icon */
+
 document.addEventListener(
   "fullscreenchange",
   () => {
 
-    if(document.fullscreenElement){
+    fullscreenBtn.textContent =
+      document.fullscreenElement
+        ? "×"
+        : "⛶";
 
-      fullscreenBtn.textContent = "×";
-      fullscreenBtn.title =
-        "Exit Full Screen";
-
-    }else{
-
-      fullscreenBtn.textContent = "⛶";
-      fullscreenBtn.title =
-        "Full Screen";
-
-    }
   }
 );
 
+
+/* CREATE PEER */
+
 function startPeer(cameraId){
 
-  if(peers.has(cameraId)){
-    return;
+  if(
+    peers.has(cameraId)
+  ){
+
+    return peers.get(cameraId);
+
   }
+
 
   activeCameraId =
     cameraId;
 
-  cameraStreams.set(
-    cameraId,
-    {
-      streams:{
-        front:null,
-        back:null
-      },
 
-      available:{
-        front:false,
-        back:false
-      }
-    }
+  createCameraData(
+    cameraId
   );
+
 
   const pc =
     new RTCPeerConnection({
+
       iceServers:[
         {
           urls:
             "stun:stun.l.google.com:19302"
         }
       ]
+
     });
+
 
   peers.set(
     cameraId,
     pc
   );
 
+
   pendingCandidates.set(
     cameraId,
     []
   );
+
 
   pc.onicecandidate =
     event => {
@@ -357,276 +491,621 @@ function startPeer(cameraId){
       if(event.candidate){
 
         send({
+
           type:"candidate",
-          candidate:event.candidate,
-          cameraId
+
+          candidate:
+            event.candidate,
+
+          cameraId:
+            cameraId
+
         });
 
       }
+
     };
 
-  let trackIndex = 0;
+
+  /*
+    RECEIVE VIDEO TRACKS
+
+    First video track = front.
+    Second video track = back.
+  */
 
   pc.ontrack =
     event => {
 
-      const type =
-        trackIndex === 0
-          ? "front"
-          : "back";
-
-      trackIndex++;
-
-      const data =
-        cameraStreams.get(
-          cameraId
-        );
-
-      if(!data) return;
-
-      data.streams[type] =
-        event.streams[0];
-
-      data.available[type] =
-        true;
-
-      updateButtons(
-        cameraId
-      );
-
       if(
-        type === "front" &&
-        !remoteVideo.srcObject
-      ){
-
-        showCamera("front");
-
-      }
-    };
-
-  send({
-    type:"viewer-ready",
-    cameraId
-  });
-}
-
-ws.onmessage =
-  async event => {
-
-    let msg;
-
-    try{
-
-      msg =
-        JSON.parse(
-          event.data
-        );
-
-    }catch{
-
-      return;
-
-    }
-
-    if(msg.type === "role"){
-
-      status.textContent =
-        "🟡 Viewer connected";
-
-      if(
-        Array.isArray(
-          msg.cameras
-        )
-      ){
-
-        msg.cameras.forEach(
-          startPeer
-        );
-
-      }
-
-      return;
-    }
-
-    if(
-      msg.type ===
-      "camera-online"
-    ){
-
-      startPeer(
-        msg.cameraId
-      );
-
-      status.textContent =
-        "🟡 Camera connected";
-
-      return;
-    }
-
-    if(
-      msg.type ===
-      "camera-live"
-    ){
-
-      status.textContent =
-        "🟢 Camera LIVE";
-
-      return;
-    }
-
-    if(
-      msg.type ===
-      "camera-offline"
-    ){
-
-      const pc =
-        peers.get(
-          msg.cameraId
-        );
-
-      if(pc){
-        pc.close();
-      }
-
-      peers.delete(
-        msg.cameraId
-      );
-
-      cameraStreams.delete(
-        msg.cameraId
-      );
-
-      if(
-        activeCameraId ===
-        msg.cameraId
-      ){
-
-        activeCameraId =
-          null;
-
-        remoteVideo.srcObject =
-          null;
-
-        frontBtn.disabled =
-          true;
-
-        backBtn.disabled =
-          true;
-
-        status.textContent =
-          "🔴 Camera offline";
-      }
-
-      return;
-    }
-
-    if(msg.type === "offer"){
-
-      const cameraId =
-        msg.cameraId;
-
-      if(
-        !peers.has(
-          cameraId
-        )
-      ){
-
-        startPeer(
-          cameraId
-        );
-
-      }
-
-      const pc =
-        peers.get(
-          cameraId
-        );
-
-      await pc.setRemoteDescription(
-        msg.offer
-      );
-
-      const queued =
-        pendingCandidates.get(
-          cameraId
-        ) || [];
-
-      for(
-        const candidate
-        of queued
-      ){
-
-        await pc
-          .addIceCandidate(
-            candidate
-          )
-          .catch(() => {});
-
-      }
-
-      pendingCandidates.set(
-        cameraId,
-        []
-      );
-
-      const answer =
-        await pc.createAnswer();
-
-      await pc.setLocalDescription(
-        answer
-      );
-
-      send({
-        type:"answer",
-        answer:
-          pc.localDescription,
-        cameraId
-      });
-
-      return;
-    }
-
-    if(msg.type === "candidate"){
-
-      const pc =
-        peers.get(
-          msg.cameraId
-        );
-
-      if(
-        !pc ||
-        !msg.candidate
+        event.track.kind !== "video"
       ){
 
         return;
 
       }
 
+
+      const data =
+        createCameraData(
+          cameraId
+        );
+
+
+      let type;
+
+
       if(
-        pc.remoteDescription
+        !data.available.front
       ){
 
-        await pc
-          .addIceCandidate(
-            msg.candidate
-          )
-          .catch(() => {});
+        type =
+          "front";
 
-      }else{
-
-        const queue =
-          pendingCandidates.get(
-            msg.cameraId
-          );
-
-        if(queue){
-          queue.push(
-            msg.candidate
-          );
-        }
       }
+
+      else if(
+        !data.available.back
+      ){
+
+        type =
+          "back";
+
+      }
+
+      else{
+
+        return;
+
+      }
+
+
+      let stream =
+        event.streams[0];
+
+
+      if(!stream){
+
+        stream =
+          new MediaStream();
+
+        stream.addTrack(
+          event.track
+        );
+
+      }
+
+
+      data.streams[type] =
+        stream;
+
+
+      data.available[type] =
+        true;
+
+
+      event.track.onunmute =
+        () => {
+
+          updateButtons();
+
+
+          if(
+            type === "front" &&
+            !remoteVideo.srcObject
+          ){
+
+            showCamera(
+              "front"
+            );
+
+          }
+
+        };
+
+
+      updateButtons();
+
+
+      /*
+        Automatically show front camera
+        when first video arrives.
+      */
+
+      if(
+        type === "front" &&
+        (
+          !remoteVideo.srcObject ||
+          activeType === "front"
+        )
+      ){
+
+        showCamera(
+          "front"
+        );
+
+      }
+
+      else if(
+        type === "back" &&
+        !data.available.front
+      ){
+
+        showCamera(
+          "back"
+        );
+
+      }
+
+    };
+
+
+  pc.onconnectionstatechange =
+    () => {
+
+      console.log(
+        "Connection:",
+        pc.connectionState
+      );
+
+
+      if(
+        pc.connectionState ===
+        "connected"
+      ){
+
+        status.textContent =
+          "🟡 Connected - waiting for video...";
+
+      }
+
+
+      if(
+        pc.connectionState ===
+        "failed"
+      ){
+
+        status.textContent =
+          "🔴 Connection failed";
+
+      }
+
+    };
+
+
+  /*
+    IMPORTANT:
+
+    Ask the camera for an offer.
+  */
+
+  send({
+
+    type:"viewer-ready",
+
+    cameraId:
+      cameraId
+
+  });
+
+
+  return pc;
+
+}
+
+
+/* HANDLE OFFER */
+
+async function handleOffer(msg){
+
+  const cameraId =
+    msg.cameraId;
+
+
+  const pc =
+    startPeer(
+      cameraId
+    );
+
+
+  try{
+
+    await pc.setRemoteDescription(
+      new RTCSessionDescription(
+        msg.offer
+      )
+    );
+
+
+    const queued =
+      pendingCandidates.get(
+        cameraId
+      ) || [];
+
+
+    for(
+      const candidate
+      of queued
+    ){
+
+      await pc
+        .addIceCandidate(
+          new RTCIceCandidate(
+            candidate
+          )
+        )
+        .catch(() => {});
+
     }
-  };
+
+
+    pendingCandidates.set(
+      cameraId,
+      []
+    );
+
+
+    const answer =
+      await pc.createAnswer();
+
+
+    await pc.setLocalDescription(
+      answer
+    );
+
+
+    send({
+
+      type:"answer",
+
+      answer:
+        pc.localDescription,
+
+      cameraId:
+        cameraId
+
+    });
+
+
+  }
+
+  catch(error){
+
+    console.error(
+      "Offer error:",
+      error
+    );
+
+
+    status.textContent =
+      "🔴 WebRTC connection error";
+
+  }
+
+}
+
+
+/* HANDLE ICE */
+
+async function handleCandidate(msg){
+
+  const cameraId =
+    msg.cameraId;
+
+
+  const pc =
+    peers.get(
+      cameraId
+    );
+
+
+  if(
+    !pc ||
+    !msg.candidate
+  ){
+
+    return;
+
+  }
+
+
+  if(
+    pc.remoteDescription &&
+    pc.remoteDescription.type
+  ){
+
+    await pc
+      .addIceCandidate(
+        new RTCIceCandidate(
+          msg.candidate
+        )
+      )
+      .catch(() => {});
+
+  }
+
+  else{
+
+    const queue =
+      pendingCandidates.get(
+        cameraId
+      );
+
+
+    if(queue){
+
+      queue.push(
+        msg.candidate
+      );
+
+    }
+
+  }
+
+}
+
+
+/* WEBSOCKET */
+
+ws.onopen = () => {
+
+  status.textContent =
+    "🟡 Waiting for camera...";
+
+};
+
+
+ws.onmessage =
+async event => {
+
+  let msg;
+
+
+  try{
+
+    msg =
+      JSON.parse(
+        event.data
+      );
+
+  }
+
+  catch(error){
+
+    return;
+
+  }
+
+
+  console.log(
+    "Server message:",
+    msg
+  );
+
+
+  if(
+    msg.type === "role"
+  ){
+
+    if(
+      Array.isArray(
+        msg.cameras
+      )
+    ){
+
+      msg.cameras.forEach(
+        cameraId => {
+
+          startPeer(
+            cameraId
+          );
+
+        }
+      );
+
+    }
+
+
+    return;
+
+  }
+
+
+  if(
+    msg.type ===
+    "camera-online"
+  ){
+
+    startPeer(
+      msg.cameraId
+    );
+
+
+    status.textContent =
+      "🟡 Camera connected";
+
+    return;
+
+  }
+
+
+  if(
+    msg.type ===
+    "camera-live"
+  ){
+
+    /*
+      Do NOT say video is LIVE here.
+      WebSocket LIVE only means
+      camera permission was granted.
+    */
+
+    const data =
+      createCameraData(
+        msg.cameraId
+      );
+
+
+    if(
+      msg.cameras
+    ){
+
+      if(
+        msg.cameras.front
+      ){
+
+        messageBox.textContent =
+          "Connecting to front camera...";
+
+      }
+
+      if(
+        msg.cameras.back
+      ){
+
+        messageBox.textContent =
+          "Connecting to front and back cameras...";
+
+      }
+
+    }
+
+
+    status.textContent =
+      "🟡 Connecting video...";
+
+
+    /*
+      IMPORTANT:
+
+      Request another offer now that
+      the camera has permission.
+    */
+
+    send({
+
+      type:"viewer-ready",
+
+      cameraId:
+        msg.cameraId
+
+    });
+
+
+    return;
+
+  }
+
+
+  if(
+    msg.type ===
+    "camera-offline"
+  ){
+
+    const pc =
+      peers.get(
+        msg.cameraId
+      );
+
+
+    if(pc){
+
+      try{
+
+        pc.close();
+
+      }
+
+      catch(error){}
+
+    }
+
+
+    peers.delete(
+      msg.cameraId
+    );
+
+
+    pendingCandidates.delete(
+      msg.cameraId
+    );
+
+
+    cameraStreams.delete(
+      msg.cameraId
+    );
+
+
+    if(
+      activeCameraId ===
+      msg.cameraId
+    ){
+
+      activeCameraId =
+        null;
+
+
+      remoteVideo.srcObject =
+        null;
+
+
+      frontBtn.disabled =
+        true;
+
+
+      backBtn.disabled =
+        true;
+
+
+      status.textContent =
+        "🔴 Camera offline";
+
+
+      messageBox.textContent =
+        "Waiting for camera...";
+
+    }
+
+
+    return;
+
+  }
+
+
+  if(
+    msg.type === "offer"
+  ){
+
+    await handleOffer(
+      msg
+    );
+
+    return;
+
+  }
+
+
+  if(
+    msg.type ===
+    "candidate"
+  ){
+
+    await handleCandidate(
+      msg
+    );
+
+  }
+
+};
+
+
+ws.onerror = () => {
+
+  status.textContent =
+    "🔴 Viewer server error";
+
+};
+
 
 ws.onclose = () => {
 
@@ -634,6 +1113,39 @@ ws.onclose = () => {
     "🔴 Viewer connection closed";
 
 };
+
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+
+    peers.forEach(
+      pc => {
+
+        try{
+
+          pc.close();
+
+        }
+
+        catch(error){}
+
+      }
+    );
+
+
+    if(
+      ws.readyState ===
+      WebSocket.OPEN
+    ){
+
+      ws.close();
+
+    }
+
+  }
+);
+
 </script>
 
 </body>
