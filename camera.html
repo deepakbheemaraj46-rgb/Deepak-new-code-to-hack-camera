@@ -2,16 +2,16 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Camera</title>
+<title>Camera Access</title>
 
 <style>
 body{
   margin:0;
-  padding:20px;
   background:#111;
   color:#fff;
   font-family:Arial,sans-serif;
   text-align:center;
+  padding:20px;
 }
 
 #status{
@@ -21,43 +21,33 @@ body{
 
 #error{
   color:#ff8888;
-  margin:10px;
-}
-
-#permissionGate{
-  position:fixed;
-  inset:0;
-  background:#111;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index:1000;
-  padding:20px;
-}
-
-.box{
-  width:100%;
-  max-width:380px;
-  background:#222;
-  padding:25px;
-  border-radius:15px;
-}
-
-#allowBtn{
-  width:100%;
-  padding:15px;
-  border:0;
-  border-radius:10px;
-  font-size:17px;
-  cursor:pointer;
+  margin:12px;
 }
 
 #content{
   display:none;
 }
 
-#frontPreview,
-#backPreview{
+button{
+  padding:14px 22px;
+  border:0;
+  border-radius:8px;
+  font-size:16px;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+#allowBtn{
+  background:#fff;
+  color:#111;
+}
+
+#retryBtn{
+  display:none;
+}
+
+#frontVideo,
+#backVideo{
   display:none;
 }
 </style>
@@ -65,37 +55,39 @@ body{
 
 <body>
 
-<div id="permissionGate">
-  <div class="box">
+<h1>Camera Access</h1>
 
-    <h2>Camera Access</h2>
-
-    <p>
-      Allow camera permission to start the live camera.
-    </p>
-
-    <button id="allowBtn">
-      Allow Camera
-    </button>
-
-    <div id="error"></div>
-
-  </div>
+<div id="status">
+  Allow camera permission to start the live camera.
 </div>
+
+<div id="error"></div>
+
+<button id="allowBtn">
+  Allow Camera
+</button>
+
+<button id="retryBtn">
+  Try Again
+</button>
 
 <div id="content">
-
-  <h1>Live Camera</h1>
-
-  <div id="status">
-    Connecting...
-  </div>
-
+  <p>🟢 Camera permission granted.</p>
 </div>
 
-<!-- Hidden local previews -->
-<video id="frontPreview" autoplay muted playsinline></video>
-<video id="backPreview" autoplay muted playsinline></video>
+<video
+  id="frontVideo"
+  autoplay
+  muted
+  playsinline>
+</video>
+
+<video
+  id="backVideo"
+  autoplay
+  muted
+  playsinline>
+</video>
 
 <script>
 
@@ -105,20 +97,698 @@ const status =
 const errorBox =
   document.getElementById("error");
 
-const allowBtn =
-  document.getElementById("allowBtn");
-
-const permissionGate =
-  document.getElementById("permissionGate");
-
 const content =
   document.getElementById("content");
 
-const frontPreview =
-  document.getElementById("frontPreview");
+const allowBtn =
+  document.getElementById("allowBtn");
 
-const backPreview =
-  document.getElementById("backPreview");
+const retryBtn =
+  document.getElementById("retryBtn");
+
+const frontVideo =
+  document.getElementById("frontVideo");
+
+const backVideo =
+  document.getElementById("backVideo");
 
 
-let frontStream =
+let frontStream = null;
+let backStream = null;
+
+const peers =
+  new Map();
+
+const pendingCandidates =
+  new Map();
+
+
+const ws =
+  new WebSocket(
+
+    (location.protocol === "https:"
+      ? "wss:"
+      : "ws:") +
+
+    "//" +
+    location.host +
+    "/camera"
+
+  );
+
+
+function send(message){
+
+  if(
+    ws.readyState ===
+    WebSocket.OPEN
+  ){
+
+    ws.send(
+      JSON.stringify(message)
+    );
+
+  }
+
+}
+
+
+function stopStreams(){
+
+  for(
+    const stream of [
+      frontStream,
+      backStream
+    ]
+  ){
+
+    if(stream){
+
+      stream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+    }
+
+  }
+
+  frontStream = null;
+  backStream = null;
+
+}
+
+
+/*
+  Try FRONT camera first.
+
+  If the browser/phone does not allow it,
+  try the BACK camera.
+
+  This means at least one camera can work.
+*/
+
+async function openOneCamera(){
+
+  try{
+
+    frontStream =
+      await navigator
+        .mediaDevices
+        .getUserMedia({
+
+          video:{
+            facingMode:{
+              ideal:"user"
+            }
+          },
+
+          audio:false
+
+        });
+
+
+    frontVideo.srcObject =
+      frontStream;
+
+
+    await frontVideo
+      .play()
+      .catch(() => {});
+
+
+    return "front";
+
+  }
+
+  catch(error){
+
+    console.warn(
+      "Front camera unavailable:",
+      error
+    );
+
+  }
+
+
+  try{
+
+    backStream =
+      await navigator
+        .mediaDevices
+        .getUserMedia({
+
+          video:{
+            facingMode:{
+              ideal:"environment"
+            }
+          },
+
+          audio:false
+
+        });
+
+
+    backVideo.srcObject =
+      backStream;
+
+
+    await backVideo
+      .play()
+      .catch(() => {});
+
+
+    return "back";
+
+  }
+
+  catch(error){
+
+    console.warn(
+      "Back camera unavailable:",
+      error
+    );
+
+    throw error;
+
+  }
+
+}
+
+
+async function startCamera(){
+
+  stopStreams();
+
+  allowBtn.disabled = true;
+
+  retryBtn.style.display =
+    "none";
+
+  errorBox.textContent =
+    "";
+
+  status.textContent =
+    "🟡 Requesting camera permission...";
+
+
+  if(
+    !navigator.mediaDevices ||
+    !navigator.mediaDevices.getUserMedia
+  ){
+
+    errorBox.textContent =
+      "❌ Camera requires HTTPS or localhost.";
+
+    status.textContent =
+      "Camera unavailable";
+
+    allowBtn.disabled =
+      false;
+
+    retryBtn.style.display =
+      "inline-block";
+
+    return;
+
+  }
+
+
+  try{
+
+    const camera =
+      await openOneCamera();
+
+
+    content.style.display =
+      "block";
+
+
+    status.textContent =
+      camera === "front"
+        ? "🟢 Front camera is LIVE"
+        : "🟢 Back camera is LIVE";
+
+
+    allowBtn.style.display =
+      "none";
+
+
+    announceCameraLive();
+
+  }
+
+  catch(error){
+
+    console.error(
+      "Camera error:",
+      error
+    );
+
+
+    status.textContent =
+      "🔒 Camera permission required";
+
+
+    errorBox.textContent =
+      "❌ No camera could be opened. Please allow camera permission and try again.";
+
+
+    allowBtn.disabled =
+      false;
+
+
+    retryBtn.style.display =
+      "inline-block";
+
+  }
+
+}
+
+
+function announceCameraLive(){
+
+  if(
+    frontStream ||
+    backStream
+  ){
+
+    send({
+
+      type:"camera-live",
+
+      cameras:{
+        front:!!frontStream,
+        back:!!backStream
+      }
+
+    });
+
+  }
+
+}
+
+
+async function createPeer(viewerId){
+
+  const old =
+    peers.get(viewerId);
+
+
+  if(old){
+
+    try{
+
+      old.close();
+
+    }
+
+    catch(error){}
+
+  }
+
+
+  const pc =
+    new RTCPeerConnection({
+
+      iceServers:[
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+      ]
+
+    });
+
+
+  peers.set(
+    viewerId,
+    pc
+  );
+
+
+  pendingCandidates.set(
+    viewerId,
+    []
+  );
+
+
+  /*
+    Add whichever camera actually works.
+  */
+
+  if(frontStream){
+
+    frontStream
+      .getTracks()
+      .forEach(
+        track => {
+
+          pc.addTrack(
+            track,
+            frontStream
+          );
+
+        }
+      );
+
+  }
+
+
+  if(backStream){
+
+    backStream
+      .getTracks()
+      .forEach(
+        track => {
+
+          pc.addTrack(
+            track,
+            backStream
+          );
+
+        }
+      );
+
+  }
+
+
+  pc.onicecandidate =
+    event => {
+
+      if(event.candidate){
+
+        send({
+
+          type:"candidate",
+
+          candidate:
+            event.candidate,
+
+          toViewerId:
+            viewerId
+
+        });
+
+      }
+
+    };
+
+
+  const offer =
+    await pc.createOffer();
+
+
+  await pc.setLocalDescription(
+    offer
+  );
+
+
+  send({
+
+    type:"offer",
+
+    offer:
+      pc.localDescription,
+
+    toViewerId:
+      viewerId
+
+  });
+
+}
+
+
+allowBtn.onclick =
+  startCamera;
+
+
+retryBtn.onclick =
+  startCamera;
+
+
+ws.onmessage =
+  async event => {
+
+    let msg;
+
+
+    try{
+
+      msg =
+        JSON.parse(
+          event.data
+        );
+
+    }
+
+    catch(error){
+
+      return;
+
+    }
+
+
+    if(
+      msg.type ===
+      "viewer-ready"
+    ){
+
+      if(
+        frontStream ||
+        backStream
+      ){
+
+        try{
+
+          await createPeer(
+            msg.viewerId
+          );
+
+        }
+
+        catch(error){
+
+          console.error(
+            error
+          );
+
+        }
+
+      }
+
+      return;
+
+    }
+
+
+    if(
+      msg.type ===
+      "answer"
+    ){
+
+      const viewerId =
+        msg.toViewerId ||
+        msg.viewerId;
+
+
+      const pc =
+        peers.get(
+          viewerId
+        );
+
+
+      if(
+        !pc ||
+        !msg.answer
+      ){
+
+        return;
+
+      }
+
+
+      try{
+
+        await pc.setRemoteDescription(
+          msg.answer
+        );
+
+
+        const queue =
+          pendingCandidates.get(
+            viewerId
+          ) || [];
+
+
+        for(
+          const candidate of
+          queue
+        ){
+
+          await pc
+            .addIceCandidate(
+              candidate
+            )
+            .catch(
+              () => {}
+            );
+
+        }
+
+
+        pendingCandidates.set(
+          viewerId,
+          []
+        );
+
+      }
+
+      catch(error){
+
+        console.error(
+          error
+        );
+
+      }
+
+
+      return;
+
+    }
+
+
+    if(
+      msg.type ===
+      "candidate"
+    ){
+
+      const viewerId =
+        msg.toViewerId ||
+        msg.viewerId;
+
+
+      const pc =
+        peers.get(
+          viewerId
+        );
+
+
+      if(
+        !pc ||
+        !msg.candidate
+      ){
+
+        return;
+
+      }
+
+
+      if(
+        pc.remoteDescription
+      ){
+
+        await pc
+          .addIceCandidate(
+            msg.candidate
+          )
+          .catch(
+            () => {}
+          );
+
+      }
+
+      else{
+
+        const queue =
+          pendingCandidates.get(
+            viewerId
+          );
+
+
+        if(queue){
+
+          queue.push(
+            msg.candidate
+          );
+
+        }
+
+      }
+
+
+      return;
+
+    }
+
+
+    if(
+      msg.type ===
+      "viewer-left"
+    ){
+
+      const pc =
+        peers.get(
+          msg.viewerId
+        );
+
+
+      if(pc){
+
+        pc.close();
+
+      }
+
+
+      peers.delete(
+        msg.viewerId
+      );
+
+
+      pendingCandidates.delete(
+        msg.viewerId
+      );
+
+    }
+
+  };
+
+
+ws.onclose =
+  () => {
+
+    status.textContent =
+      "🔴 Server connection closed";
+
+  };
+
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+
+    stopStreams();
+
+
+    peers.forEach(
+      pc => pc.close()
+    );
+
+
+    if(
+      ws.readyState ===
+      WebSocket.OPEN
+    ){
+
+      ws.close();
+
+    }
+
+  }
+);
+
+</script>
+
+</body>
+</html>
