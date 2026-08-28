@@ -1,7 +1,8 @@
 {
-  "name": "remote-camera",
-  "version": "2.0.0",
-  "private": true,
+  "name": "consent-camera",
+  "version": "1.0.0",
+  "description": "Consent-based front and back camera WebRTC viewer",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
