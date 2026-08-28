@@ -12,8 +12,7 @@ const WebSocket =
 
 
 const PORT =
-  process.env.PORT ||
-  10000;
+  process.env.PORT || 10000;
 
 
 function makeId(){
@@ -35,10 +34,7 @@ function makeId(){
 }
 
 
-function send(
-  ws,
-  message
-){
+function send(ws,message){
 
   if(
     ws &&
@@ -47,9 +43,7 @@ function send(
   ){
 
     ws.send(
-      JSON.stringify(
-        message
-      )
+      JSON.stringify(message)
     );
 
   }
@@ -57,12 +51,9 @@ function send(
 }
 
 
-/*
-  HTTP SERVER
-*/
-
 const server =
   http.createServer(
+
     (req,res) => {
 
       const routes = {
@@ -87,10 +78,12 @@ const server =
 
       const pathname =
         new URL(
+
           req.url,
+
           `http://${req.headers.host || "localhost"}`
-        )
-        .pathname;
+
+        ).pathname;
 
 
       const file =
@@ -101,11 +94,9 @@ const server =
 
         res.writeHead(404);
 
-        res.end(
+        return res.end(
           "Not found"
         );
-
-        return;
 
       }
 
@@ -123,11 +114,9 @@ const server =
 
             res.writeHead(500);
 
-            res.end(
+            return res.end(
               "Server error"
             );
-
-            return;
 
           }
 
@@ -153,6 +142,7 @@ const server =
       );
 
     }
+
   );
 
 
@@ -164,7 +154,6 @@ const wss =
 
 const cameras =
   new Map();
-
 
 const viewers =
   new Map();
@@ -179,13 +168,10 @@ wss.on(
       new URL(
         req.url,
         "http://localhost"
-      )
-      .pathname;
+      ).pathname;
 
 
-    /*
-      CAMERA CONNECTION
-    */
+    /* CAMERA */
 
     if(
       pathname ===
@@ -196,13 +182,15 @@ wss.on(
         makeId();
 
 
-      ws.cameraLive =
-        false;
-
-
       cameras.set(
         cameraId,
-        ws
+        {
+
+          ws,
+
+          live:false
+
+        }
       );
 
 
@@ -220,25 +208,16 @@ wss.on(
       );
 
 
-      /*
-        Tell all viewers
-        that a camera connected
-      */
-
       for(
-        const [
-          viewerId,
-          viewer
-        ]
-        of viewers
+        const viewer
+        of viewers.values()
       ){
 
         send(
-          viewer,
+          viewer.ws,
           {
 
-            type:
-              "camera-online",
+            type:"camera-online",
 
             cameraId
 
@@ -272,17 +251,23 @@ wss.on(
           }
 
 
-          /*
-            CAMERA IS LIVE
-          */
-
           if(
             msg.type ===
             "camera-live"
           ){
 
-            ws.cameraLive =
-              true;
+            const camera =
+              cameras.get(
+                cameraId
+              );
+
+
+            if(camera){
+
+              camera.live =
+                true;
+
+            }
 
 
             for(
@@ -290,11 +275,11 @@ wss.on(
                 viewerId,
                 viewer
               ]
-              of viewers
+              of viewers.entries()
             ){
 
               send(
-                viewer,
+                viewer.ws,
                 {
 
                   type:
@@ -303,15 +288,15 @@ wss.on(
                   cameraId,
 
                   cameras:
-                    msg.cameras
+                    msg.cameras || {}
 
                 }
               );
 
 
               /*
-                Ask camera to create
-                WebRTC offer for viewer
+                Ask camera to send
+                WebRTC offer.
               */
 
               send(
@@ -336,9 +321,6 @@ wss.on(
 
           /*
             CAMERA -> VIEWER
-
-            Offer
-            ICE candidate
           */
 
           if(
@@ -354,7 +336,7 @@ wss.on(
             if(viewer){
 
               send(
-                viewer,
+                viewer.ws,
                 {
 
                   ...msg,
@@ -369,7 +351,6 @@ wss.on(
           }
 
         }
-
       );
 
 
@@ -377,17 +358,6 @@ wss.on(
         "close",
 
         () => {
-
-          if(
-            cameras.get(
-              cameraId
-            ) !== ws
-          ){
-
-            return;
-
-          }
-
 
           cameras.delete(
             cameraId
@@ -400,7 +370,7 @@ wss.on(
           ){
 
             send(
-              viewer,
+              viewer.ws,
               {
 
                 type:
@@ -418,20 +388,12 @@ wss.on(
       );
 
 
-      ws.on(
-        "error",
-        () => {}
-      );
-
-
       return;
 
     }
 
 
-    /*
-      VIEWER CONNECTION
-    */
+    /* VIEWER */
 
     if(
       pathname ===
@@ -444,13 +406,16 @@ wss.on(
 
       viewers.set(
         viewerId,
-        ws
+        {
+
+          id:
+            viewerId,
+
+          ws
+
+        }
       );
 
-
-      /*
-        Send current cameras
-      */
 
       send(
         ws,
@@ -471,21 +436,29 @@ wss.on(
       );
 
 
-      /*
-        Tell viewer which
-        cameras are already live
-      */
-
       for(
         const [
           cameraId,
           camera
         ]
-        of cameras
+        of cameras.entries()
       ){
 
+        send(
+          ws,
+          {
+
+            type:
+              "camera-online",
+
+            cameraId
+
+          }
+        );
+
+
         if(
-          camera.cameraLive
+          camera.live
         ){
 
           send(
@@ -530,7 +503,7 @@ wss.on(
 
 
           /*
-            VIEWER REQUESTS STREAM
+            VIEWER WANTS CAMERA
           */
 
           if(
@@ -549,7 +522,7 @@ wss.on(
             if(camera){
 
               send(
-                camera,
+                camera.ws,
                 {
 
                   type:
@@ -570,9 +543,6 @@ wss.on(
 
           /*
             VIEWER -> CAMERA
-
-            Answer
-            ICE candidate
           */
 
           if(
@@ -588,12 +558,10 @@ wss.on(
             if(camera){
 
               send(
-                camera,
+                camera.ws,
                 {
 
                   ...msg,
-
-                  viewerId,
 
                   toViewerId:
                     viewerId
@@ -620,18 +588,13 @@ wss.on(
           );
 
 
-          /*
-            Tell cameras
-            viewer disconnected
-          */
-
           for(
             const camera
             of cameras.values()
           ){
 
             send(
-              camera,
+              camera.ws,
               {
 
                 type:
@@ -649,12 +612,6 @@ wss.on(
       );
 
 
-      ws.on(
-        "error",
-        () => {}
-      );
-
-
       return;
 
     }
@@ -663,6 +620,7 @@ wss.on(
     ws.close();
 
   }
+
 );
 
 
