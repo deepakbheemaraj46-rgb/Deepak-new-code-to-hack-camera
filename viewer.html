@@ -1,395 +1,360 @@
 <!doctype html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Live Camera Viewer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi Camera Viewer</title>
 
-  <style>
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 15px;
-    }
-
-    h1 {
-      margin: 8px 0;
-    }
-
-    #status {
-      margin: 12px auto;
-      padding: 12px;
-      background: #222;
-      border-radius: 8px;
-      max-width: 700px;
-    }
-
-    .online {
-      color: #00ff66;
-    }
-
-    .warning {
-      color: #ffd000;
-    }
-
-    .offline {
-      color: #ff5555;
-    }
-
-    .cameras {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
-      max-width: 1100px;
-      margin: 20px auto;
-    }
-
-    .cameraBox {
-      position: relative;
-      background: #000;
-      border-radius: 12px;
-      overflow: hidden;
-      min-height: 240px;
-    }
-
-    video {
-      display: block;
-      width: 100%;
-      min-height: 240px;
-      background: #000;
-      object-fit: contain;
-    }
-
-    .label {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 5;
-      background: rgba(0,0,0,.75);
-      padding: 7px 10px;
-      border-radius: 7px;
-      font-weight: bold;
-    }
-
-    .fullscreen {
-      position: absolute;
-      right: 10px;
-      bottom: 10px;
-      z-index: 5;
-      background: rgba(0,0,0,.75);
-      color: white;
-      border: 0;
-      padding: 9px 12px;
-      border-radius: 7px;
-      font-size: 15px;
-    }
-
-    @media (max-width: 700px) {
-      .cameras {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+h1 { font-size: 25px; margin: 20px 10px; }
+#status { font-size: 17px; margin: 15px; }
+#grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 12px;
+}
+.card { background: #222; border-radius: 10px; padding: 8px; }
+.label { font-size: 14px; padding: 6px; color: #ddd; }
+.video-wrap {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.video-wrap video {
+  width: 100%;
+  height: auto;
+  min-height: 220px;
+  display: block;
+  background: #000;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.fullscreen-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  font-size: 26px;
+  z-index: 10;
+  cursor: pointer;
+}
+.video-wrap:fullscreen,
+.video-wrap:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.video-wrap:fullscreen video,
+.video-wrap:-webkit-full-screen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+</style>
 </head>
 
 <body>
 
-  <h1>Live Camera Viewer</h1>
-
-  <div id="status" class="warning">
-    Connecting...
-  </div>
-
-  <div class="cameras">
-
-    <div class="cameraBox">
-
-      <div class="label">
-        📷 Front Camera
-      </div>
-
-      <video
-        id="frontVideo"
-        autoplay
-        playsinline>
-      </video>
-
-      <button
-        class="fullscreen"
-        onclick="fullscreenVideo('frontVideo')">
-        ⛶ Full Screen
-      </button>
-
-    </div>
-
-    <div class="cameraBox">
-
-      <div class="label">
-        📷 Back Camera
-      </div>
-
-      <video
-        id="backVideo"
-        autoplay
-        playsinline>
-      </video>
-
-      <button
-        class="fullscreen"
-        onclick="fullscreenVideo('backVideo')">
-        ⛶ Full Screen
-      </button>
-
-    </div>
-
-  </div>
+<h1>👁️ Live Camera Viewer</h1>
+<div id="status">🟡 Connecting...</div>
+<div id="grid"></div>
 
 <script>
-const statusBox = document.getElementById("status");
 
-const frontVideo =
-  document.getElementById("frontVideo");
+const status = document.getElementById("status");
+const grid = document.getElementById("grid");
 
-const backVideo =
-  document.getElementById("backVideo");
+const peers = new Map();
+const pendingCandidates = new Map();
+const cards = new Map();
 
-let frontPC = null;
-let backPC = null;
+let ws = null;
+let reconnectDelay = 1000;
 
-const wsProtocol =
-  location.protocol === "https:" ? "wss:" : "ws:";
-
-const ws = new WebSocket(
-  wsProtocol + "//" + location.host
-);
-
-function setStatus(text, className) {
-  statusBox.textContent = text;
-  statusBox.className = className;
+function sendMessage(message) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+    return true;
+  }
+  return false;
 }
 
-ws.onopen = () => {
+function addCamera(cameraId) {
+  if (cards.has(cameraId)) return;
 
-  ws.send(JSON.stringify({
-    type: "register",
-    role: "viewer"
-  }));
+  const card = document.createElement("div");
+  card.className = "card";
 
-  setStatus(
-    "Viewer connected. Waiting for Camera A...",
-    "warning"
-  );
-};
+  const label = document.createElement("div");
+  label.className = "label";
+  label.textContent = "Camera " + cameraId;
 
-ws.onclose = () => {
-  setStatus(
-    "Viewer connection lost.",
-    "offline"
-  );
-};
+  const videoWrap = document.createElement("div");
+  videoWrap.className = "video-wrap";
 
-ws.onmessage = async event => {
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = true;
+  video.controls = false;
 
-  let msg;
-
-  try {
-    msg = JSON.parse(event.data);
-  } catch {
-    return;
-  }
-
-  if (msg.type === "camera-online") {
-
-    setStatus(
-      "Camera A is online.",
-      "online"
-    );
-
-    return;
-  }
-
-  if (msg.type === "camera-offline") {
-
-    closeConnections();
-
-    frontVideo.srcObject = null;
-    backVideo.srcObject = null;
-
-    setStatus(
-      "Camera A is offline.",
-      "offline"
-    );
-
-    return;
-  }
-
-  if (msg.type === "offer") {
-
-    if (msg.camera === "front") {
-      await handleOffer(
-        "front",
-        msg.offer
-      );
-    }
-
-    if (msg.camera === "back") {
-      await handleOffer(
-        "back",
-        msg.offer
-      );
-    }
-
-    return;
-  }
-
-  if (msg.type === "candidate") {
-
-    try {
-
-      if (
-        msg.camera === "front" &&
-        frontPC
-      ) {
-        await frontPC.addIceCandidate(
-          msg.candidate
-        );
-      }
-
-      if (
-        msg.camera === "back" &&
-        backPC
-      ) {
-        await backPC.addIceCandidate(
-          msg.candidate
-        );
-      }
-
-    } catch (error) {
-      console.log("ICE error:", error);
-    }
-  }
-};
-
-async function handleOffer(cameraName, offer) {
-
-  let pc;
-
-  if (cameraName === "front") {
-
-    if (frontPC) {
-      frontPC.close();
-    }
-
-    pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
-
-    frontPC = pc;
-
-  } else {
-
-    if (backPC) {
-      backPC.close();
-    }
-
-    pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
-
-    backPC = pc;
-  }
-
-  pc.ontrack = event => {
-
-    if (cameraName === "front") {
-      frontVideo.srcObject =
-        event.streams[0];
-    }
-
-    if (cameraName === "back") {
-      backVideo.srcObject =
-        event.streams[0];
-    }
-
-    setStatus(
-      "Live camera stream connected.",
-      "online"
-    );
+  const fullscreenBtn = document.createElement("button");
+  fullscreenBtn.className = "fullscreen-btn";
+  fullscreenBtn.type = "button";
+  fullscreenBtn.innerHTML = "⛶";
+  fullscreenBtn.onclick = () => {
+    if (videoWrap.requestFullscreen) videoWrap.requestFullscreen();
+    else if (videoWrap.webkitRequestFullscreen) videoWrap.webkitRequestFullscreen();
+    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
   };
+
+  videoWrap.appendChild(video);
+  videoWrap.appendChild(fullscreenBtn);
+  card.appendChild(label);
+  card.appendChild(videoWrap);
+  grid.appendChild(card);
+
+  cards.set(cameraId, { card, video, videoWrap });
+}
+
+function createPeer(cameraId) {
+  let pc = peers.get(cameraId);
+  if (pc) return pc;
+
+  addCamera(cameraId);
+
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+
+  peers.set(cameraId, pc);
+  pendingCandidates.set(cameraId, []);
 
   pc.onicecandidate = event => {
-
     if (event.candidate) {
-
-      ws.send(JSON.stringify({
-        type: "candidate",
-        camera: cameraName,
-        candidate: event.candidate
-      }));
-
+      sendMessage({ type: "candidate", candidate: event.candidate, cameraId });
     }
   };
 
-  await pc.setRemoteDescription(
-    new RTCSessionDescription(offer)
-  );
+  pc.ontrack = event => {
+    if (event.track.kind !== "video") return;
+    const item = cards.get(cameraId);
+    if (!item) return;
 
-  const answer =
-    await pc.createAnswer();
+    let stream = event.streams[0];
+    if (!stream) {
+      stream = new MediaStream();
+      stream.addTrack(event.track);
+    }
+    item.video.srcObject = stream;
+    item.video.play().then(() => {
+      status.textContent = "🟢 Camera is LIVE";
+    }).catch(err => console.log("Video play error:", err));
+  };
 
-  await pc.setLocalDescription(answer);
+  pc.onconnectionstatechange = () => {
+    console.log("Connection:", cameraId, pc.connectionState);
 
-  ws.send(JSON.stringify({
-    type: "answer",
-    camera: cameraName,
-    answer: answer
-  }));
+    if (pc.connectionState === "connected") {
+      status.textContent = "🟢 Camera is LIVE";
+    } else if (pc.connectionState === "connecting") {
+      status.textContent = "🟡 Connecting to camera...";
+    } else if (pc.connectionState === "disconnected") {
+      status.textContent = "🟡 Connection interrupted, retrying...";
+      // Give it a moment to self-recover, then re-request if it hasn't.
+      setTimeout(() => {
+        if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+          requestCamera(cameraId);
+        }
+      }, 3000);
+    } else if (pc.connectionState === "failed") {
+      status.textContent = "🔴 Connection failed, retrying...";
+      // FIX for "long delay before video shows": instead of dying
+      // permanently, tear down and immediately re-request a fresh
+      // offer from the camera.
+      removeCamera(cameraId);
+      addCamera(cameraId);
+      requestCamera(cameraId);
+    }
+  };
+
+  return pc;
 }
 
-function closeConnections() {
-
-  if (frontPC) {
-    frontPC.close();
-    frontPC = null;
-  }
-
-  if (backPC) {
-    backPC.close();
-    backPC = null;
-  }
+function requestCamera(cameraId) {
+  sendMessage({ type: "viewer-ready", cameraId });
 }
 
-async function fullscreenVideo(id) {
+async function handleOffer(message) {
+  const cameraId = message.cameraId;
+  if (!cameraId || !message.offer) return;
 
-  const video =
-    document.getElementById(id);
+  const pc = createPeer(cameraId);
 
   try {
+    await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
 
-    if (video.requestFullscreen) {
-      await video.requestFullscreen();
-    } else if (video.webkitEnterFullscreen) {
-      video.webkitEnterFullscreen();
+    const queuedCandidates = pendingCandidates.get(cameraId) || [];
+    for (const candidate of queuedCandidates) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.log("Queued ICE error:", error);
+      }
     }
+    pendingCandidates.set(cameraId, []);
 
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    sendMessage({ type: "answer", answer: pc.localDescription, cameraId });
   } catch (error) {
-    console.log(error);
+    console.error("Offer error:", error);
+    status.textContent = "🔴 WebRTC connection error";
   }
 }
+
+async function handleCandidate(message) {
+  const cameraId = message.cameraId;
+  if (!cameraId || !message.candidate) return;
+
+  const pc = createPeer(cameraId);
+
+  if (!pc.remoteDescription || !pc.remoteDescription.type) {
+    pendingCandidates.get(cameraId).push(message.candidate);
+    return;
+  }
+
+  try {
+    await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+  } catch (error) {
+    console.log("ICE candidate error:", error);
+  }
+}
+
+function removeCamera(cameraId) {
+  const pc = peers.get(cameraId);
+  if (pc) {
+    try { pc.close(); } catch (error) {}
+  }
+  peers.delete(cameraId);
+  pendingCandidates.delete(cameraId);
+
+  const item = cards.get(cameraId);
+  if (item) {
+    item.video.srcObject = null;
+    item.card.remove();
+  }
+  cards.delete(cameraId);
+}
+
+function connectWebSocket() {
+  ws = new WebSocket(
+    (location.protocol === "https:" ? "wss:" : "ws:") +
+    "//" + location.host + "/viewer"
+  );
+
+  ws.onopen = () => {
+    reconnectDelay = 1000;
+    status.textContent = "🟡 Waiting for cameras...";
+  };
+
+  ws.onmessage = async event => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch (error) {
+      return;
+    }
+
+    if (message.type === "role") {
+      status.textContent = "🟡 Waiting for cameras...";
+      if (Array.isArray(message.cameras)) {
+        message.cameras.forEach(cameraId => {
+          addCamera(cameraId);
+          createPeer(cameraId);
+          requestCamera(cameraId);
+        });
+      }
+      return;
+    }
+
+    if (message.type === "camera-online") {
+      addCamera(message.cameraId);
+      createPeer(message.cameraId);
+      requestCamera(message.cameraId);
+      status.textContent = "🟡 Camera connected";
+      return;
+    }
+
+    if (message.type === "camera-live") {
+      addCamera(message.cameraId);
+      createPeer(message.cameraId);
+      requestCamera(message.cameraId);
+      status.textContent = "🟢 Camera is LIVE";
+      return;
+    }
+
+    if (message.type === "camera-offline") {
+      removeCamera(message.cameraId);
+      if (peers.size === 0) {
+        status.textContent = "🔴 No cameras connected";
+      }
+      return;
+    }
+
+    if (message.type === "offer") {
+      await handleOffer(message);
+      return;
+    }
+
+    if (message.type === "candidate") {
+      await handleCandidate(message);
+    }
+  };
+
+  ws.onerror = () => {
+    status.textContent = "🔴 Viewer server error";
+  };
+
+  ws.onclose = () => {
+    status.textContent = "🟡 Reconnecting...";
+    for (const cameraId of [...peers.keys()]) {
+      removeCamera(cameraId);
+    }
+    // Auto-reconnect instead of leaving the viewer dead until a
+    // manual refresh — another part of the "takes forever" symptom.
+    setTimeout(connectWebSocket, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+  };
+}
+
+window.addEventListener("beforeunload", () => {
+  for (const pc of peers.values()) {
+    try { pc.close(); } catch (error) {}
+  }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+});
+
+connectWebSocket();
+
 </script>
 
 </body>
