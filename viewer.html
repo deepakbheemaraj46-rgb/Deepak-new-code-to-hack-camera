@@ -52,6 +52,24 @@ h1 { font-size: 25px; margin: 20px 10px; }
   z-index: 10;
   cursor: pointer;
 }
+.switch-btn {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  font-size: 22px;
+  z-index: 10;
+  cursor: pointer;
+}
+.switch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .video-wrap:fullscreen,
 .video-wrap:-webkit-full-screen {
   width: 100%;
@@ -125,13 +143,27 @@ function addCamera(cameraId) {
     else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
   };
 
+  const switchBtn = document.createElement("button");
+  switchBtn.className = "switch-btn";
+  switchBtn.type = "button";
+  switchBtn.title = "Switch front/back camera";
+  switchBtn.innerHTML = "🔄";
+  switchBtn.onclick = () => {
+    sendMessage({ type: "switch-camera", cameraId });
+    // Brief disable so a person can't spam it faster than the phone
+    // can actually complete a switch.
+    switchBtn.disabled = true;
+    setTimeout(() => { switchBtn.disabled = false; }, 2500);
+  };
+
   videoWrap.appendChild(video);
   videoWrap.appendChild(fullscreenBtn);
+  videoWrap.appendChild(switchBtn);
   card.appendChild(label);
   card.appendChild(videoWrap);
   grid.appendChild(card);
 
-  cards.set(cameraId, { card, video, videoWrap });
+  cards.set(cameraId, { card, video, videoWrap, switchBtn });
 }
 
 function createPeer(cameraId) {
@@ -358,4 +390,4 @@ connectWebSocket();
 </script>
 
 </body>
-</html>
+  </html>
