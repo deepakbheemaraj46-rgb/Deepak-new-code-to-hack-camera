@@ -93,6 +93,8 @@
     let ws = null;
     let wakeLock = null;
     let reconnectDelay = 1000;
+    let facingMode = "environment"; // current camera: "environment" (back) or "user" (front)
+    let isSwitching = false;
 
     const peers = new Map();
     const pendingCandidates = new Map();
@@ -245,6 +247,12 @@
           }
           return;
         }
+
+        // A viewer remotely asked to flip between front/back camera.
+        if (m.type === "switch-camera") {
+          switchCamera();
+          return;
+        }
       };
 
       ws.onerror = () => console.log("WebSocket error");
@@ -310,6 +318,71 @@
     function restartPeer(viewerId) {
       sendMessage({ type: "viewer-ready", viewerId });
       makeOffer(viewerId);
+    }
+
+    // Swap between front ("user") and back ("environment") camera
+    // while streaming, without needing physical access to the phone.
+    // Uses replaceTrack() so existing peer connections keep flowing
+    // instead of tearing down and renegotiating.
+    async function switchCamera() {
+      if (!permissionAllowed || !stream || isSwitching) return;
+      isSwitching = true;
+
+      const nextFacingMode = facingMode === "environment" ? "user" : "environment";
+      const previousStream = stream;
+
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: nextFacingMode } },
+          audio: false
+        });
+
+        const newTrack = newStream.getVideoTracks()[0];
+
+        // Push the new track into every active peer connection.
+        for (const pc of peers.values()) {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+          if (sender) {
+            await sender.replaceTrack(newTrack).catch(err => {
+              console.log("replaceTrack error:", err);
+            });
+          }
+        }
+
+        stream = newStream;
+        facingMode = nextFacingMode;
+        preview.srcObject = newStream;
+
+        previousStream.getTracks().forEach(track => track.stop());
+      } catch (err) {
+        console.log("Switch camera error:", err);
+        // Some devices only expose one facingMode (e.g. a laptop with
+        // a single webcam) — fall back to "ideal" so it at least
+        // doesn't hard-fail, and let the user know if that also fails.
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: nextFacingMode } },
+            audio: false
+          });
+          const newTrack = fallbackStream.getVideoTracks()[0];
+          for (const pc of peers.values()) {
+            const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+            if (sender) await sender.replaceTrack(newTrack).catch(() => {});
+          }
+          stream = fallbackStream;
+          facingMode = nextFacingMode;
+          preview.srcObject = fallbackStream;
+          previousStream.getTracks().forEach(track => track.stop());
+        } catch (err2) {
+          console.log("Switch camera fallback failed:", err2);
+          setStatus("⚠️ Could not switch camera");
+          setTimeout(() => {
+            if (permissionAllowed) setStatus("🟢 Streaming");
+          }, 2000);
+        }
+      } finally {
+        isSwitching = false;
+      }
     }
 
     allowCameraBtn.onclick = async () => {
