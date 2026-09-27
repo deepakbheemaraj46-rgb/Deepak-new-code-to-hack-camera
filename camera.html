@@ -1,136 +1,529 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Camera Test</title>
+<meta charset="utf-8">
 
-<style>
-    body {
-        margin: 0;
-        background: #111;
-        color: white;
-        font-family: Arial, sans-serif;
-        text-align: center;
-    }
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
 
-    h2 {
-        margin: 20px 10px;
-    }
+<title>Camera Sharing</title>
 
-    video {
-        width: 95%;
-        max-width: 800px;
-        background: #000;
-        border-radius: 12px;
-        display: block;
-        margin: 20px auto;
-    }
+<link rel="stylesheet" href="/style.css">
 
-    button {
-        padding: 14px 24px;
-        margin: 8px;
-        border: 0;
-        border-radius: 8px;
-        font-size: 16px;
-        cursor: pointer;
-    }
-
-    #start {
-        background: #16803c;
-        color: white;
-    }
-
-    #stop {
-        background: #b42318;
-        color: white;
-    }
-
-    #status {
-        margin: 15px;
-        font-size: 16px;
-    }
-</style>
 </head>
 
 <body>
 
-<h2>Consent Camera Test</h2>
+<main class="camera-page">
 
-<video id="preview" autoplay playsinline muted></video>
+<section class="camera-panel">
 
-<div>
-    <button id="start">Allow Camera</button>
-    <button id="stop">Stop Camera</button>
+<h1>Camera Sharing</h1>
+
+<p class="notice">
+  When you start sharing, your camera will be
+  transmitted live to the authorized viewer.
+</p>
+
+<video
+  id="preview"
+  autoplay
+  muted
+  playsinline
+></video>
+
+<div
+  id="status"
+  class="status"
+>
+  Connecting...
 </div>
 
-<div id="status">Camera is OFF</div>
+<div class="camera-id">
+
+Camera ID:
+<strong id="cameraId">
+---
+</strong>
+
+</div>
+
+<button
+  id="start"
+>
+  Allow Camera & Start Sharing
+</button>
+
+<button
+  id="stop"
+  class="danger"
+  disabled
+>
+  Stop Sharing
+</button>
+
+<p id="message"></p>
+
+</section>
+
+</main>
 
 <script>
 
-const video = document.getElementById("preview");
-const status = document.getElementById("status");
+const preview =
+  document.getElementById("preview");
 
+const status =
+  document.getElementById("status");
+
+const message =
+  document.getElementById("message");
+
+const start =
+  document.getElementById("start");
+
+const stop =
+  document.getElementById("stop");
+
+const cameraIdElement =
+  document.getElementById("cameraId");
+
+let socket = null;
 let stream = null;
+
+const peers = new Map();
+
+let reconnectTimer = null;
+
+let cameraId =
+  localStorage.getItem("cameraId");
+
+if (!cameraId) {
+
+  cameraId =
+    "CAM-" +
+    crypto.randomUUID()
+      .slice(0, 8)
+      .toUpperCase();
+
+  localStorage.setItem(
+    "cameraId",
+    cameraId
+  );
+}
+
+cameraIdElement.textContent =
+  cameraId;
+
+function setStatus(text, live = false) {
+
+  status.textContent = text;
+
+  status.className =
+    live
+      ? "status live"
+      : "status";
+}
+
+function connect() {
+
+  if (
+    socket &&
+    (
+      socket.readyState ===
+      WebSocket.OPEN ||
+      socket.readyState ===
+      WebSocket.CONNECTING
+    )
+  ) {
+    return;
+  }
+
+  const protocol =
+    location.protocol === "https:"
+      ? "wss:"
+      : "ws:";
+
+  socket =
+    new WebSocket(
+      `${protocol}//${location.host}`
+    );
+
+  socket.onopen = () => {
+
+    setStatus(
+      stream
+        ? "Connected"
+        : "Connected — ready"
+    );
+
+    socket.send(
+      JSON.stringify({
+        type: "register-camera",
+        cameraId
+      })
+    );
+  };
+
+  socket.onclose = () => {
+
+    setStatus(
+      "Connection lost — reconnecting..."
+    );
+
+    clearTimeout(
+      reconnectTimer
+    );
+
+    reconnectTimer =
+      setTimeout(
+        connect,
+        2000
+      );
+  };
+
+  socket.onerror = () => {
+
+    setStatus(
+      "Connection error"
+    );
+  };
+
+  socket.onmessage =
+    async event => {
+
+      const msg =
+        JSON.parse(event.data);
+
+      if (
+        msg.type ===
+        "camera-registered"
+      ) {
+
+        cameraId =
+          msg.cameraId;
+
+        cameraIdElement.textContent =
+          cameraId;
+      }
+
+      if (
+        msg.type ===
+        "viewer-joined"
+      ) {
+
+        await createPeer(
+          msg.viewerId
+        );
+      }
+
+      if (
+        msg.type === "answer"
+      ) {
+
+        const peer =
+          peers.get(
+            msg.viewerId
+          );
+
+        if (peer) {
+
+          await peer.setRemoteDescription(
+            msg.answer
+          );
+        }
+      }
+
+      if (
+        msg.type === "candidate"
+      ) {
+
+        const peer =
+          peers.get(
+            msg.viewerId
+          );
+
+        if (
+          peer &&
+          msg.candidate
+        ) {
+
+          try {
+
+            await peer.addIceCandidate(
+              msg.candidate
+            );
+
+          } catch {}
+        }
+      }
+
+      if (
+        msg.type ===
+        "live-confirmed"
+      ) {
+
+        setStatus(
+          "LIVE — camera is being shared",
+          true
+        );
+      }
+
+      if (
+        msg.type === "replaced"
+      ) {
+
+        setStatus(
+          "This camera session was replaced."
+        );
+      }
+    };
+}
 
 async function startCamera() {
 
-    try {
+  try {
 
-        status.textContent = "Requesting camera permission...";
+    message.textContent = "";
 
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false
+    stream =
+      await navigator.mediaDevices
+        .getUserMedia({
+
+          video: {
+
+            width: {
+              ideal: 1920
+            },
+
+            height: {
+              ideal: 1080
+            },
+
+            frameRate: {
+              ideal: 30,
+              max: 30
+            }
+          },
+
+          audio: false
         });
 
-        console.log("Camera stream:", stream);
-        console.log("Video tracks:", stream.getVideoTracks());
+    preview.srcObject =
+      stream;
 
-        video.srcObject = stream;
+    start.disabled = true;
+    stop.disabled = false;
 
-        await video.play();
+    setStatus(
+      "Camera active — waiting for viewer",
+      true
+    );
 
-        status.textContent = "🟢 CAMERA IS ON";
+    connect();
 
-        console.log("Video width:", video.videoWidth);
-        console.log("Video height:", video.videoHeight);
+  } catch (error) {
 
-    } catch (error) {
+    message.textContent =
+      "Camera permission is required to start sharing.";
 
-        console.error("Camera error:", error);
+    setStatus(
+      "Camera permission was denied or unavailable."
+    );
+  }
+}
 
-        status.textContent =
-            "❌ Camera error: " + error.name + " - " + error.message;
-    }
+async function createPeer(viewerId) {
+
+  if (!stream) return;
+
+  const pc =
+    new RTCPeerConnection({
+
+      iceServers: [
+
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+
+      ],
+
+      iceCandidatePoolSize: 10
+    });
+
+  peers.set(
+    viewerId,
+    pc
+  );
+
+  stream
+    .getTracks()
+    .forEach(track => {
+
+      pc.addTrack(
+        track,
+        stream
+      );
+
+    });
+
+  pc.onicecandidate =
+    event => {
+
+      if (
+        !event.candidate ||
+        !socket ||
+        socket.readyState !==
+        WebSocket.OPEN
+      ) {
+        return;
+      }
+
+      socket.send(
+        JSON.stringify({
+
+          type:
+            "candidate",
+
+          cameraId,
+
+          viewerId,
+
+          candidate:
+            event.candidate
+        })
+      );
+    };
+
+  pc.onconnectionstatechange =
+    () => {
+
+      if (
+        pc.connectionState ===
+        "connected"
+      ) {
+
+        if (
+          socket &&
+          socket.readyState ===
+          WebSocket.OPEN
+        ) {
+
+          socket.send(
+            JSON.stringify({
+              type:
+                "stream-live"
+            })
+          );
+        }
+      }
+
+      if (
+        pc.connectionState ===
+          "failed" ||
+        pc.connectionState ===
+          "disconnected"
+      ) {
+
+        setTimeout(
+          () => {
+
+            if (
+              peers.get(viewerId) ===
+              pc
+            ) {
+
+              peers.delete(
+                viewerId
+              );
+
+              try {
+                pc.close();
+              } catch {}
+
+            }
+
+          },
+          3000
+        );
+      }
+    };
+
+  const offer =
+    await pc.createOffer();
+
+  await pc.setLocalDescription(
+    offer
+  );
+
+  socket.send(
+    JSON.stringify({
+
+      type: "offer",
+
+      cameraId,
+
+      viewerId,
+
+      offer:
+        pc.localDescription
+    })
+  );
 }
 
 function stopCamera() {
 
-    if (stream) {
+  if (stream) {
 
-        stream.getTracks().forEach(track => {
-            track.stop();
-        });
+    stream
+      .getTracks()
+      .forEach(track =>
+        track.stop()
+      );
 
-        stream = null;
-        video.srcObject = null;
+    stream = null;
+  }
 
-    }
+  preview.srcObject =
+    null;
 
-    status.textContent = "Camera is OFF";
+  for (
+    const peer
+    of peers.values()
+  ) {
+
+    try {
+      peer.close();
+    } catch {}
+
+  }
+
+  peers.clear();
+
+  start.disabled = false;
+  stop.disabled = true;
+
+  setStatus(
+    "Camera sharing stopped."
+  );
 }
 
-document.getElementById("start").addEventListener(
-    "click",
-    startCamera
+start.addEventListener(
+  "click",
+  startCamera
 );
 
-document.getElementById("stop").addEventListener(
-    "click",
-    stopCamera
+stop.addEventListener(
+  "click",
+  stopCamera
 );
+
+connect();
 
 </script>
 
