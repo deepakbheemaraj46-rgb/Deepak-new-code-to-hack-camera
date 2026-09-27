@@ -1,18 +1,116 @@
 <!doctype html>
 <html lang="en">
-
 <head>
-
 <meta charset="utf-8">
-
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
+<meta name="viewport" content="width=device-width,initial-scale=1">
 
 <title>Camera Sharing</title>
 
-<link rel="stylesheet" href="/style.css">
+<style>
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #080808;
+  color: #fff;
+  font-family: Arial, sans-serif;
+}
+
+.camera-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.camera-panel {
+  width: min(620px, 100%);
+  background: #151515;
+  border: 1px solid #292929;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.camera-panel h1 {
+  margin-top: 0;
+}
+
+.notice {
+  color: #bbb;
+  line-height: 1.5;
+}
+
+.camera-panel video {
+  display: block;
+  width: 100%;
+  background: #000;
+  border-radius: 10px;
+  margin: 15px 0;
+}
+
+.status {
+  background: #222;
+  padding: 11px;
+  border-radius: 8px;
+  color: #bbb;
+}
+
+.status.live {
+  color: #42e36b;
+}
+
+.camera-id {
+  background: #0d0d0d;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 13px 15px;
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#start {
+  background: #fff;
+  color: #000;
+}
+
+.danger {
+  background: #c83232;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+#message {
+  color: #ffadad;
+  line-height: 1.4;
+}
+
+@media (max-width: 600px) {
+  .camera-page {
+    padding: 10px;
+  }
+
+  .camera-panel {
+    padding: 16px;
+  }
+}
+</style>
 
 </head>
 
@@ -25,45 +123,35 @@
 <h1>Camera Sharing</h1>
 
 <p class="notice">
-  When you start sharing, your camera will be
-  transmitted live to the authorized viewer.
+Your camera will be shared live with the authorized
+viewer while this page is open.
 </p>
 
 <video
   id="preview"
   autoplay
   muted
-  playsinline
-></video>
+  playsinline>
+</video>
 
-<div
-  id="status"
-  class="status"
->
-  Connecting...
+<div id="status" class="status">
+Connecting...
 </div>
 
 <div class="camera-id">
-
 Camera ID:
-<strong id="cameraId">
----
-</strong>
-
+<strong id="cameraId">---</strong>
 </div>
 
-<button
-  id="start"
->
-  Allow Camera & Start Sharing
+<button id="start">
+Allow Camera & Start Sharing
 </button>
 
 <button
   id="stop"
   class="danger"
-  disabled
->
-  Stop Sharing
+  disabled>
+Stop Sharing
 </button>
 
 <p id="message"></p>
@@ -75,22 +163,22 @@ Camera ID:
 <script>
 
 const preview =
-  document.getElementById("preview");
+document.getElementById("preview");
 
 const status =
-  document.getElementById("status");
+document.getElementById("status");
 
 const message =
-  document.getElementById("message");
+document.getElementById("message");
 
 const start =
-  document.getElementById("start");
+document.getElementById("start");
 
 const stop =
-  document.getElementById("stop");
+document.getElementById("stop");
 
 const cameraIdElement =
-  document.getElementById("cameraId");
+document.getElementById("cameraId");
 
 let socket = null;
 let stream = null;
@@ -100,7 +188,7 @@ const peers = new Map();
 let reconnectTimer = null;
 
 let cameraId =
-  localStorage.getItem("cameraId");
+localStorage.getItem("cameraId");
 
 if (!cameraId) {
 
@@ -117,7 +205,7 @@ if (!cameraId) {
 }
 
 cameraIdElement.textContent =
-  cameraId;
+cameraId;
 
 function setStatus(text, live = false) {
 
@@ -134,10 +222,8 @@ function connect() {
   if (
     socket &&
     (
-      socket.readyState ===
-      WebSocket.OPEN ||
-      socket.readyState ===
-      WebSocket.CONNECTING
+      socket.readyState === WebSocket.OPEN ||
+      socket.readyState === WebSocket.CONNECTING
     )
   ) {
     return;
@@ -194,94 +280,90 @@ function connect() {
   };
 
   socket.onmessage =
-    async event => {
+  async event => {
 
-      const msg =
-        JSON.parse(event.data);
+    const msg =
+      JSON.parse(event.data);
 
-      if (
-        msg.type ===
-        "camera-registered"
-      ) {
+    if (
+      msg.type ===
+      "camera-registered"
+    ) {
 
-        cameraId =
-          msg.cameraId;
+      cameraId =
+        msg.cameraId;
 
-        cameraIdElement.textContent =
-          cameraId;
-      }
+      cameraIdElement.textContent =
+        cameraId;
 
-      if (
-        msg.type ===
-        "viewer-joined"
-      ) {
+      localStorage.setItem(
+        "cameraId",
+        cameraId
+      );
+    }
 
-        await createPeer(
+    if (
+      msg.type ===
+      "viewer-joined"
+    ) {
+
+      await createPeer(
+        msg.viewerId
+      );
+    }
+
+    if (
+      msg.type === "answer"
+    ) {
+
+      const peer =
+        peers.get(
           msg.viewerId
         );
-      }
 
-      if (
-        msg.type === "answer"
-      ) {
+      if (peer) {
 
-        const peer =
-          peers.get(
-            msg.viewerId
-          );
-
-        if (peer) {
-
-          await peer.setRemoteDescription(
-            msg.answer
-          );
-        }
-      }
-
-      if (
-        msg.type === "candidate"
-      ) {
-
-        const peer =
-          peers.get(
-            msg.viewerId
-          );
-
-        if (
-          peer &&
-          msg.candidate
-        ) {
-
-          try {
-
-            await peer.addIceCandidate(
-              msg.candidate
-            );
-
-          } catch {}
-        }
-      }
-
-      if (
-        msg.type ===
-        "live-confirmed"
-      ) {
-
-        setStatus(
-          "LIVE — camera is being shared",
-          true
+        await peer.setRemoteDescription(
+          msg.answer
         );
       }
+    }
+
+    if (
+      msg.type === "candidate"
+    ) {
+
+      const peer =
+        peers.get(
+          msg.viewerId
+        );
 
       if (
-        msg.type === "replaced"
+        peer &&
+        msg.candidate
       ) {
 
-        setStatus(
-          "This camera session was replaced."
-        );
+        try {
+
+          await peer.addIceCandidate(
+            msg.candidate
+          );
+
+        } catch {}
       }
-    };
+    }
+
+    if (
+      msg.type ===
+      "live-confirmed"
+    ) {
+
+      setStatus(
+        "LIVE — camera is being shared",
+        true
+      );
+    }
+  };
 }
 
 async function startCamera() {
@@ -345,12 +427,10 @@ async function createPeer(viewerId) {
     new RTCPeerConnection({
 
       iceServers: [
-
         {
           urls:
             "stun:stun.l.google.com:19302"
         }
-
       ],
 
       iceCandidatePoolSize: 10
@@ -369,90 +449,85 @@ async function createPeer(viewerId) {
         track,
         stream
       );
-
     });
 
   pc.onicecandidate =
-    event => {
+  event => {
 
-      if (
-        !event.candidate ||
-        !socket ||
-        socket.readyState !==
-        WebSocket.OPEN
-      ) {
-        return;
-      }
+    if (
+      !event.candidate ||
+      !socket ||
+      socket.readyState !==
+      WebSocket.OPEN
+    ) {
+      return;
+    }
 
-      socket.send(
-        JSON.stringify({
+    socket.send(
+      JSON.stringify({
 
-          type:
-            "candidate",
+        type:
+          "candidate",
 
-          cameraId,
+        cameraId,
 
-          viewerId,
+        viewerId,
 
-          candidate:
-            event.candidate
-        })
-      );
-    };
+        candidate:
+          event.candidate
+      })
+    );
+  };
 
   pc.onconnectionstatechange =
-    () => {
+  () => {
+
+    if (
+      pc.connectionState ===
+      "connected"
+    ) {
 
       if (
-        pc.connectionState ===
-        "connected"
+        socket &&
+        socket.readyState ===
+        WebSocket.OPEN
       ) {
 
-        if (
-          socket &&
-          socket.readyState ===
-          WebSocket.OPEN
-        ) {
-
-          socket.send(
-            JSON.stringify({
-              type:
-                "stream-live"
-            })
-          );
-        }
-      }
-
-      if (
-        pc.connectionState ===
-          "failed" ||
-        pc.connectionState ===
-          "disconnected"
-      ) {
-
-        setTimeout(
-          () => {
-
-            if (
-              peers.get(viewerId) ===
-              pc
-            ) {
-
-              peers.delete(
-                viewerId
-              );
-
-              try {
-                pc.close();
-              } catch {}
-
-            }
-
-          },
-          3000
+        socket.send(
+          JSON.stringify({
+            type:
+              "stream-live"
+          })
         );
       }
-    };
+    }
+
+    if (
+      pc.connectionState ===
+        "failed" ||
+      pc.connectionState ===
+        "disconnected"
+    ) {
+
+      setTimeout(() => {
+
+        if (
+          peers.get(viewerId) === pc
+        ) {
+
+          peers.delete(
+            viewerId
+          );
+
+          try {
+            pc.close();
+          } catch {}
+
+        }
+
+      }, 3000);
+    }
+  };
 
   const offer =
     await pc.createOffer();
@@ -500,7 +575,6 @@ function stopCamera() {
     try {
       peer.close();
     } catch {}
-
   }
 
   peers.clear();
