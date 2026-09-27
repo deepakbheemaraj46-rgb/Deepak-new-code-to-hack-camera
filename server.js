@@ -2,12 +2,25 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const crypto = require("crypto");
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-app.use(express.static("public"));
+app.use(express.static(__dirname));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+app.get("/camera", (req, res) => {
+  res.sendFile(path.join(__dirname, "camera.html"));
+});
+
+app.get("/viewer", (req, res) => {
+  res.sendFile(path.join(__dirname, "viewer.html"));
+});
 
 const cameras = new Map();
 
@@ -121,13 +134,11 @@ async function cameraWentOffline(cameraId) {
 }
 
 wss.on("connection", (ws) => {
-
   ws.role = null;
   ws.cameraId = null;
   ws.viewerId = null;
 
   ws.on("message", async (raw) => {
-
     let msg;
 
     try {
@@ -136,26 +147,20 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /*
-      CAMERA REGISTRATION
-    */
-
+    // CAMERA REGISTRATION
     if (msg.type === "register-camera") {
-
       let cameraId =
         typeof msg.cameraId === "string" &&
         msg.cameraId.trim()
           ? msg.cameraId.trim().slice(0, 80)
           : makeId();
 
-      const oldCamera =
-        cameras.get(cameraId);
+      const oldCamera = cameras.get(cameraId);
 
       if (oldCamera) {
         send(oldCamera.ws, {
           type: "replaced",
-          message:
-            "This camera session was replaced."
+          message: "This camera session was replaced."
         });
 
         try {
@@ -178,16 +183,11 @@ wss.on("connection", (ws) => {
       });
 
       broadcastCameraList();
-
       return;
     }
 
-    /*
-      VIEWER REGISTRATION
-    */
-
+    // VIEWER REGISTRATION
     if (msg.type === "register-viewer") {
-
       ws.role = "viewer";
       ws.viewerId = makeId();
 
@@ -200,24 +200,17 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /*
-      VIEWER WATCHES CAMERA
-    */
-
+    // VIEWER WATCHES CAMERA
     if (msg.type === "watch") {
-
       if (ws.role !== "viewer") return;
 
-      const camera =
-        cameras.get(msg.cameraId);
+      const camera = cameras.get(msg.cameraId);
 
       if (!camera) {
-
         send(ws, {
           type: "camera-offline",
           cameraId: msg.cameraId
         });
-
         return;
       }
 
@@ -232,54 +225,33 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /*
-      VIEWER LEAVES CAMERA
-    */
-
+    // VIEWER LEAVES CAMERA
     if (msg.type === "unwatch") {
-
-      const camera =
-        cameras.get(msg.cameraId);
+      const camera = cameras.get(msg.cameraId);
 
       if (camera) {
         camera.viewers.delete(ws);
 
         if (camera.viewers.size === 0) {
-          await cameraWentOffline(
-            msg.cameraId
-          );
+          await cameraWentOffline(msg.cameraId);
         }
       }
 
       return;
     }
 
-    /*
-      CAMERA CONFIRMS THAT STREAM IS ACTIVE
-    */
-
+    // CAMERA CONFIRMS THAT STREAM IS ACTIVE
     if (msg.type === "stream-live") {
-
-      if (
-        ws.role === "camera" &&
-        ws.cameraId
-      ) {
-        await cameraBecameLive(
-          ws.cameraId
-        );
+      if (ws.role === "camera" && ws.cameraId) {
+        await cameraBecameLive(ws.cameraId);
       }
 
       return;
     }
 
-    /*
-      WEBRTC OFFER
-    */
-
+    // WEBRTC OFFER
     if (msg.type === "offer") {
-
-      const camera =
-        cameras.get(msg.cameraId);
+      const camera = cameras.get(msg.cameraId);
 
       if (!camera) return;
 
@@ -293,24 +265,17 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /*
-      WEBRTC ANSWER
-    */
-
+    // WEBRTC ANSWER
     if (msg.type === "answer") {
-
-      const camera =
-        cameras.get(msg.cameraId);
+      const camera = cameras.get(msg.cameraId);
 
       if (!camera) return;
 
       for (const client of wss.clients) {
-
         if (
           client.role === "viewer" &&
           client.viewerId === msg.viewerId
         ) {
-
           send(client, {
             type: "answer",
             cameraId: msg.cameraId,
@@ -323,35 +288,25 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    /*
-      ICE CANDIDATE
-    */
-
+    // ICE CANDIDATE
     if (msg.type === "candidate") {
-
-      const camera =
-        cameras.get(msg.cameraId);
+      const camera = cameras.get(msg.cameraId);
 
       if (!camera) return;
 
       if (ws.role === "viewer") {
-
         send(camera.ws, {
           type: "candidate",
           cameraId: msg.cameraId,
           viewerId: ws.viewerId,
           candidate: msg.candidate
         });
-
       } else if (ws.role === "camera") {
-
         for (const client of wss.clients) {
-
           if (
             client.role === "viewer" &&
             client.viewerId === msg.viewerId
           ) {
-
             send(client, {
               type: "candidate",
               cameraId: msg.cameraId,
@@ -367,27 +322,12 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", async () => {
+    // CAMERA CLOSED
+    if (ws.role === "camera" && ws.cameraId) {
+      const camera = cameras.get(ws.cameraId);
 
-    /*
-      CAMERA CLOSED
-    */
-
-    if (
-      ws.role === "camera" &&
-      ws.cameraId
-    ) {
-
-      const camera =
-        cameras.get(ws.cameraId);
-
-      if (
-        camera &&
-        camera.ws === ws
-      ) {
-
-        const cameraId =
-          ws.cameraId;
-
+      if (camera && camera.ws === ws) {
+        const cameraId = ws.cameraId;
         cameras.delete(cameraId);
 
         await notifyNtfy(
@@ -400,28 +340,13 @@ wss.on("connection", (ws) => {
       }
     }
 
-    /*
-      VIEWER CLOSED
-    */
-
-    if (
-      ws.role === "viewer"
-    ) {
-
-      for (
-        const [cameraId, camera]
-        of cameras
-      ) {
-
+    // VIEWER CLOSED
+    if (ws.role === "viewer") {
+      for (const [cameraId, camera] of cameras) {
         camera.viewers.delete(ws);
 
-        if (
-          camera.viewers.size === 0
-        ) {
-
-          await cameraWentOffline(
-            cameraId
-          );
+        if (camera.viewers.size === 0) {
+          await cameraWentOffline(cameraId);
         }
       }
     }
@@ -429,9 +354,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, () => {
-
-  console.log(
-    `Server listening on port ${PORT}`
-  );
-
+  console.log(`Server listening on port ${PORT}`);
 });
