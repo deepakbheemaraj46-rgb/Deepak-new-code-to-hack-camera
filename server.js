@@ -1,690 +1,437 @@
+const express = require("express");
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const https = require("https");
 const WebSocket = require("ws");
+const crypto = require("crypto");
 
-const PORT = process.env.PORT || 10000;
-const NTFY_TOPIC = process.env.NTFY_TOPIC || "";
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-
-/* =========================================
-   NTFY
-========================================= */
-
-function sendNtfy(message) {
-
-    const topic = NTFY_TOPIC.trim();
-
-    if (!topic) {
-        console.log("NTFY_TOPIC not configured");
-        return;
-    }
-
-    const data = Buffer.from(message, "utf8");
-
-    const req = https.request({
-        hostname: "ntfy.sh",
-        port: 443,
-        path: "/" + encodeURIComponent(topic),
-        method: "POST",
-
-        headers: {
-            "Content-Type":
-                "text/plain; charset=utf-8",
-
-            "Content-Length":
-                data.length,
-
-            "Title":
-                "Camera Awareness Demo",
-
-            "Priority":
-                "high"
-        }
-
-    }, res => {
-
-        console.log(
-            "ntfy status:",
-            res.statusCode
-        );
-
-        res.on("data", () => {});
-    });
-
-    req.on("error", error => {
-        console.error(
-            "ntfy error:",
-            error.message
-        );
-    });
-
-    req.write(data);
-    req.end();
-}
-
-
-/* =========================================
-   SEND
-========================================= */
-
-function send(ws, message) {
-
-    if (
-        ws &&
-        ws.readyState === WebSocket.OPEN
-    ) {
-        ws.send(
-            JSON.stringify(message)
-        );
-
-        return true;
-    }
-
-    return false;
-}
-
-
-/* =========================================
-   ID
-========================================= */
-
-function makeId() {
-
-    return (
-        Math.random()
-            .toString(36)
-            .slice(2, 8)
-        +
-        Date.now()
-            .toString(36)
-            .slice(-5)
-    );
-}
-
-
-/* =========================================
-   HTTP
-========================================= */
-
-const server =
-    http.createServer((req, res) => {
-
-        const routes = {
-
-            "/":
-                "camera.html",
-
-            "/camera":
-                "camera.html",
-
-            "/camera.html":
-                "camera.html",
-
-            "/viewer":
-                "viewer.html",
-
-            "/viewer.html":
-                "viewer.html"
-        };
-
-        let pathname;
-
-        try {
-
-            pathname =
-                new URL(
-                    req.url,
-                    `http://${req.headers.host || "localhost"}`
-                ).pathname;
-
-        } catch {
-
-            res.writeHead(400);
-            return res.end("Bad request");
-        }
-
-        const file =
-            routes[pathname];
-
-        if (!file) {
-
-            res.writeHead(404);
-            return res.end("Not found");
-        }
-
-        fs.readFile(
-            path.join(__dirname, file),
-            (err, data) => {
-
-                if (err) {
-
-                    console.error(err);
-
-                    res.writeHead(500);
-                    return res.end(
-                        "Server error"
-                    );
-                }
-
-                res.writeHead(
-                    200,
-                    {
-                        "Content-Type":
-                            "text/html; charset=utf-8"
-                    }
-                );
-
-                res.end(data);
-            }
-        );
-    });
-
-
-/* =========================================
-   WEBSOCKET
-========================================= */
-
-const wss =
-    new WebSocket.Server({
-        server
-    });
-
+app.use(express.static("public"));
 
 const cameras = new Map();
-const viewers = new Map();
 
+const PORT = process.env.PORT || 3000;
 
-/* =========================================
-   CONNECTION
-========================================= */
+/*
+  Set these as environment variables on your server:
 
-wss.on(
-    "connection",
-    (ws, req) => {
+  NTFY_TOPIC=your-private-random-topic
+  NTFY_SERVER=https://ntfy.sh
+*/
 
-        let pathname;
+const NTFY_SERVER =
+  process.env.NTFY_SERVER || "https://ntfy.sh";
+
+const NTFY_TOPIC =
+  process.env.NTFY_TOPIC || "";
+
+function makeId() {
+  return crypto.randomBytes(8).toString("hex");
+}
+
+function send(ws, data) {
+  if (
+    ws &&
+    ws.readyState === WebSocket.OPEN
+  ) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+async function notifyNtfy(title, message, tags = "") {
+  if (!NTFY_TOPIC) {
+    console.log(
+      "NTFY_TOPIC is not configured:",
+      title,
+      message
+    );
+    return;
+  }
+
+  try {
+    await fetch(
+      `${NTFY_SERVER}/${encodeURIComponent(NTFY_TOPIC)}`,
+      {
+        method: "POST",
+        headers: {
+          "Title": title,
+          "Priority": "4",
+          "Tags": tags
+        },
+        body: message
+      }
+    );
+  } catch (error) {
+    console.error(
+      "ntfy notification failed:",
+      error.message
+    );
+  }
+}
+
+function broadcastCameraList() {
+  const list = [...cameras.keys()];
+
+  for (const client of wss.clients) {
+    if (client.role === "viewer") {
+      send(client, {
+        type: "camera-list",
+        cameras: list
+      });
+    }
+  }
+}
+
+async function cameraBecameLive(cameraId) {
+  const camera = cameras.get(cameraId);
+
+  if (!camera || camera.live) return;
+
+  camera.live = true;
+
+  send(camera.ws, {
+    type: "live-confirmed",
+    cameraId
+  });
+
+  await notifyNtfy(
+    "Camera is LIVE",
+    `Camera ${cameraId} is now LIVE.`,
+    "camera,red_circle"
+  );
+
+  broadcastCameraList();
+}
+
+async function cameraWentOffline(cameraId) {
+  const camera = cameras.get(cameraId);
+
+  if (!camera || !camera.live) return;
+
+  camera.live = false;
+
+  await notifyNtfy(
+    "Camera OFFLINE",
+    `Camera ${cameraId} is now offline.`,
+    "camera,black_circle"
+  );
+
+  broadcastCameraList();
+}
+
+wss.on("connection", (ws) => {
+
+  ws.role = null;
+  ws.cameraId = null;
+  ws.viewerId = null;
+
+  ws.on("message", async (raw) => {
+
+    let msg;
+
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+
+    /*
+      CAMERA REGISTRATION
+    */
+
+    if (msg.type === "register-camera") {
+
+      let cameraId =
+        typeof msg.cameraId === "string" &&
+        msg.cameraId.trim()
+          ? msg.cameraId.trim().slice(0, 80)
+          : makeId();
+
+      const oldCamera =
+        cameras.get(cameraId);
+
+      if (oldCamera) {
+        send(oldCamera.ws, {
+          type: "replaced",
+          message:
+            "This camera session was replaced."
+        });
 
         try {
-
-            pathname =
-                new URL(
-                    req.url,
-                    "http://localhost"
-                ).pathname;
-
-        } catch {
-
-            ws.close();
-            return;
-        }
-
-
-        /* =================================
-           CAMERA
-        ================================= */
-
-        if (pathname === "/camera") {
-
-            const cameraId =
-                makeId();
-
-            cameras.set(
-                cameraId,
-                ws
-            );
-
-            ws.cameraLive = false;
-
-            console.log(
-                "Camera connected:",
-                cameraId
-            );
-
-
-            sendNtfy(
-                "🟢 Camera browser connected"
-            );
-
-
-            send(
-                ws,
-                {
-                    type: "role",
-                    role: "camera",
-                    cameraId
-                }
-            );
-
-
-            /* Tell existing viewers */
-
-            for (
-                const viewer
-                of viewers.values()
-            ) {
-
-                send(
-                    viewer,
-                    {
-                        type:
-                            "camera-online",
-
-                        cameraId
-                    }
-                );
-            }
-
-
-            /* Camera messages */
-
-            ws.on(
-                "message",
-                raw => {
-
-                    let msg;
-
-                    try {
-
-                        msg =
-                            JSON.parse(
-                                raw.toString()
-                            );
-
-                    } catch {
-
-                        return;
-                    }
-
-
-                    /* =====================
-                       CAMERA LIVE
-                    ===================== */
-
-                    if (
-                        msg.type ===
-                        "camera-live"
-                    ) {
-
-                        ws.cameraLive =
-                            true;
-
-                        for (
-                            const viewer
-                            of viewers.values()
-                        ) {
-
-                            send(
-                                viewer,
-                                {
-                                    type:
-                                        "camera-live",
-
-                                    cameraId
-                                }
-                            );
-                        }
-
-                        return;
-                    }
-
-
-                    /* =====================
-                       CAMERA SWITCH
-                    ===================== */
-
-                    if (
-                        msg.type ===
-                        "camera-switch"
-                    ) {
-
-                        const mode =
-                            msg.mode === "environment"
-                                ? "environment"
-                                : "user";
-
-
-                        send(
-                            ws,
-                            {
-                                type:
-                                    "switch-camera",
-
-                                mode
-                            }
-                        );
-
-
-                        sendNtfy(
-                            `📷 Camera switch requested: ${mode}`
-                        );
-
-                        return;
-                    }
-
-
-                    /* =====================
-                       WEBRTC
-                    ===================== */
-
-                    if (
-                        msg.toViewerId
-                    ) {
-
-                        const viewer =
-                            viewers.get(
-                                String(
-                                    msg.toViewerId
-                                )
-                            );
-
-                        if (viewer) {
-
-                            send(
-                                viewer,
-                                {
-                                    ...msg,
-                                    cameraId
-                                }
-                            );
-                        }
-
-                        return;
-                    }
-
-                }
-            );
-
-
-            /* Camera disconnected */
-
-            ws.on(
-                "close",
-                () => {
-
-                    if (
-                        cameras.get(
-                            cameraId
-                        ) !== ws
-                    ) {
-
-                        return;
-                    }
-
-                    cameras.delete(
-                        cameraId
-                    );
-
-
-                    console.log(
-                        "Camera disconnected:",
-                        cameraId
-                    );
-
-
-                    sendNtfy(
-                        "🔴 Camera browser disconnected"
-                    );
-
-
-                    for (
-                        const viewer
-                        of viewers.values()
-                    ) {
-
-                        send(
-                            viewer,
-                            {
-                                type:
-                                    "camera-offline",
-
-                                cameraId
-                            }
-                        );
-                    }
-                }
-            );
-
-
-            return;
-        }
-
-
-        /* =================================
-           VIEWER
-        ================================= */
-
-        if (pathname === "/viewer") {
-
-            const viewerId =
-                makeId();
-
-            viewers.set(
-                viewerId,
-                ws
-            );
-
-
-            console.log(
-                "Viewer connected:",
-                viewerId
-            );
-
-
-            send(
-                ws,
-                {
-                    type: "role",
-                    role: "viewer",
-                    viewerId,
-
-                    cameras:
-                        [...cameras.keys()]
-                }
-            );
-
-
-            /* Current cameras */
-
-            for (
-                const [
-                    cameraId,
-                    camera
-                ]
-                of cameras.entries()
-            ) {
-
-                send(
-                    ws,
-                    {
-                        type:
-                            "camera-online",
-
-                        cameraId
-                    }
-                );
-
-
-                if (
-                    camera.cameraLive
-                ) {
-
-                    send(
-                        ws,
-                        {
-                            type:
-                                "camera-live",
-
-                            cameraId
-                        }
-                    );
-                }
-            }
-
-
-            /* Viewer messages */
-
-            ws.on(
-                "message",
-                raw => {
-
-                    let msg;
-
-                    try {
-
-                        msg =
-                            JSON.parse(
-                                raw.toString()
-                            );
-
-                    } catch {
-
-                        return;
-                    }
-
-
-                    /* =====================
-                       START VIEWING
-                    ===================== */
-
-                    if (
-                        msg.type ===
-                        "viewer-ready" &&
-                        msg.cameraId
-                    ) {
-
-                        const camera =
-                            cameras.get(
-                                String(
-                                    msg.cameraId
-                                )
-                            );
-
-
-                        if (!camera) {
-
-                            send(
-                                ws,
-                                {
-                                    type:
-                                        "camera-offline",
-
-                                    cameraId:
-                                        msg.cameraId
-                                }
-                            );
-
-                            return;
-                        }
-
-
-                        send(
-                            camera,
-                            {
-                                type:
-                                    "viewer-ready",
-
-                                viewerId
-                            }
-                        );
-
-
-                        return;
-                    }
-
-
-                    /* =====================
-                       WEBRTC
-                    ===================== */
-
-                    if (
-                        msg.cameraId
-                    ) {
-
-                        const camera =
-                            cameras.get(
-                                String(
-                                    msg.cameraId
-                                )
-                            );
-
-
-                        if (!camera) {
-                            return;
-                        }
-
-
-                        send(
-                            camera,
-                            {
-                                ...msg,
-
-                                toViewerId:
-                                    viewerId
-                            }
-                        );
-                    }
-
-                }
-            );
-
-
-            /* Viewer disconnected */
-
-            ws.on(
-                "close",
-                () => {
-
-                    viewers.delete(
-                        viewerId
-                    );
-
-
-                    for (
-                        const camera
-                        of cameras.values()
-                    ) {
-
-                        send(
-                            camera,
-                            {
-                                type:
-                                    "viewer-offline",
-
-                                viewerId
-                            }
-                        );
-                    }
-                }
-            );
-
-            return;
-        }
-
-
-        ws.close();
-    });
-
-
-/* =========================================
-   START
-========================================= */
-
-server.listen(
-    PORT,
-    "0.0.0.0",
-    () => {
-
-        console.log(
-            `Server running on port ${PORT}`
-        );
-
-        console.log(
-            "NTFY:",
-            NTFY_TOPIC
-                ? "configured"
-                : "not configured"
-        );
+          oldCamera.ws.close();
+        } catch {}
+      }
+
+      ws.role = "camera";
+      ws.cameraId = cameraId;
+
+      cameras.set(cameraId, {
+        ws,
+        live: false,
+        viewers: new Set()
+      });
+
+      send(ws, {
+        type: "camera-registered",
+        cameraId
+      });
+
+      broadcastCameraList();
+
+      return;
     }
-);
+
+    /*
+      VIEWER REGISTRATION
+    */
+
+    if (msg.type === "register-viewer") {
+
+      ws.role = "viewer";
+      ws.viewerId = makeId();
+
+      send(ws, {
+        type: "viewer-registered",
+        viewerId: ws.viewerId,
+        cameras: [...cameras.keys()]
+      });
+
+      return;
+    }
+
+    /*
+      VIEWER WATCHES CAMERA
+    */
+
+    if (msg.type === "watch") {
+
+      if (ws.role !== "viewer") return;
+
+      const camera =
+        cameras.get(msg.cameraId);
+
+      if (!camera) {
+
+        send(ws, {
+          type: "camera-offline",
+          cameraId: msg.cameraId
+        });
+
+        return;
+      }
+
+      camera.viewers.add(ws);
+
+      send(camera.ws, {
+        type: "viewer-joined",
+        cameraId: msg.cameraId,
+        viewerId: ws.viewerId
+      });
+
+      return;
+    }
+
+    /*
+      VIEWER LEAVES CAMERA
+    */
+
+    if (msg.type === "unwatch") {
+
+      const camera =
+        cameras.get(msg.cameraId);
+
+      if (camera) {
+        camera.viewers.delete(ws);
+
+        if (camera.viewers.size === 0) {
+          await cameraWentOffline(
+            msg.cameraId
+          );
+        }
+      }
+
+      return;
+    }
+
+    /*
+      CAMERA CONFIRMS THAT STREAM IS ACTIVE
+    */
+
+    if (msg.type === "stream-live") {
+
+      if (
+        ws.role === "camera" &&
+        ws.cameraId
+      ) {
+        await cameraBecameLive(
+          ws.cameraId
+        );
+      }
+
+      return;
+    }
+
+    /*
+      WEBRTC OFFER
+    */
+
+    if (msg.type === "offer") {
+
+      const camera =
+        cameras.get(msg.cameraId);
+
+      if (!camera) return;
+
+      send(camera.ws, {
+        type: "offer",
+        cameraId: msg.cameraId,
+        viewerId: msg.viewerId,
+        offer: msg.offer
+      });
+
+      return;
+    }
+
+    /*
+      WEBRTC ANSWER
+    */
+
+    if (msg.type === "answer") {
+
+      const camera =
+        cameras.get(msg.cameraId);
+
+      if (!camera) return;
+
+      for (const client of wss.clients) {
+
+        if (
+          client.role === "viewer" &&
+          client.viewerId === msg.viewerId
+        ) {
+
+          send(client, {
+            type: "answer",
+            cameraId: msg.cameraId,
+            viewerId: msg.viewerId,
+            answer: msg.answer
+          });
+        }
+      }
+
+      return;
+    }
+
+    /*
+      ICE CANDIDATE
+    */
+
+    if (msg.type === "candidate") {
+
+      const camera =
+        cameras.get(msg.cameraId);
+
+      if (!camera) return;
+
+      if (ws.role === "viewer") {
+
+        send(camera.ws, {
+          type: "candidate",
+          cameraId: msg.cameraId,
+          viewerId: ws.viewerId,
+          candidate: msg.candidate
+        });
+
+      } else if (ws.role === "camera") {
+
+        for (const client of wss.clients) {
+
+          if (
+            client.role === "viewer" &&
+            client.viewerId === msg.viewerId
+          ) {
+
+            send(client, {
+              type: "candidate",
+              cameraId: msg.cameraId,
+              viewerId: msg.viewerId,
+              candidate: msg.candidate
+            });
+          }
+        }
+      }
+
+      return;
+    }
+  });
+
+  ws.on("close", async () => {
+
+    /*
+      CAMERA CLOSED
+    */
+
+    if (
+      ws.role === "camera" &&
+      ws.cameraId
+    ) {
+
+      const camera =
+        cameras.get(ws.cameraId);
+
+      if (
+        camera &&
+        camera.ws === ws
+      ) {
+
+        const cameraId =
+          ws.cameraId;
+
+        cameras.delete(cameraId);
+
+        await notifyNtfy(
+          "Camera OFFLINE",
+          `Camera ${cameraId} closed or disconnected.`,
+          "camera,black_circle"
+        );
+
+        broadcastCameraList();
+      }
+    }
+
+    /*
+      VIEWER CLOSED
+    */
+
+    if (
+      ws.role === "viewer"
+    ) {
+
+      for (
+        const [cameraId, camera]
+        of cameras
+      ) {
+
+        camera.viewers.delete(ws);
+
+        if (
+          camera.viewers.size === 0
+        ) {
+
+          await cameraWentOffline(
+            cameraId
+          );
+        }
+      }
+    }
+  });
+});
+
+server.listen(PORT, () => {
+
+  console.log(
+    `Server listening on port ${PORT}`
+  );
+
+});
