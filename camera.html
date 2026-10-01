@@ -1,603 +1,1632 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Camera Sharing</title>
 
-<title>Camera Sharing</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
 
-<style>
-* {
-  box-sizing: border-box;
-}
+    #mainContent {
+      display: none;
+    }
 
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-  background: #080808;
-  color: #fff;
-  font-family: Arial, sans-serif;
-}
+    #status {
+      font-size: 18px;
+      margin: 15px;
+    }
 
-.camera-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-}
+    #id {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 15px;
+    }
 
-.camera-panel {
-  width: min(620px, 100%);
-  background: #151515;
-  border: 1px solid #292929;
-  border-radius: 14px;
-  padding: 20px;
-}
+    #permissionGate {
+      position: fixed;
+      inset: 0;
+      z-index: 999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: #111;
+      overflow-y: auto;
+    }
 
-.camera-panel h1 {
-  margin-top: 0;
-}
+    .permissionBox {
+      width: 100%;
+      max-width: 420px;
+      padding: 25px;
+      box-sizing: border-box;
+      background: #222;
+      border-radius: 16px;
+      border: 1px solid #444;
+    }
 
-.notice {
-  color: #bbb;
-  line-height: 1.5;
-}
+    .permissionBox h2 {
+      margin-top: 0;
+      font-size: 25px;
+    }
 
-.camera-panel video {
-  display: block;
-  width: 100%;
-  background: #000;
-  border-radius: 10px;
-  margin: 15px 0;
-}
+    .permissionBox p {
+      color: #ddd;
+      line-height: 1.5;
+    }
 
-.status {
-  background: #222;
-  padding: 11px;
-  border-radius: 8px;
-  color: #bbb;
-}
+    .consentText {
+      max-height: 220px;
+      overflow-y: auto;
+      text-align: left;
+      padding: 15px;
+      margin: 18px 0;
+      background: #111;
+      border: 1px solid #444;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
 
-.status.live {
-  color: #42e36b;
-}
+    .consentText strong {
+      color: #fff;
+      font-size: 15px;
+    }
 
-.camera-id {
-  background: #0d0d0d;
-  padding: 12px;
-  border-radius: 8px;
-  margin: 12px 0;
-}
+    #allowCameraBtn,
+    #declineCameraBtn {
+      width: 100%;
+      padding: 16px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
 
-button {
-  width: 100%;
-  border: 0;
-  border-radius: 8px;
-  padding: 13px 15px;
-  margin-top: 8px;
-  font-size: 15px;
-  font-weight: bold;
-  cursor: pointer;
-}
+    #allowCameraBtn {
+      background: #fff;
+      color: #000;
+    }
 
-#start {
-  background: #fff;
-  color: #000;
-}
+    #declineCameraBtn {
+      background: #444;
+      color: #fff;
+    }
 
-.danger {
-  background: #c83232;
-  color: #fff;
-}
+    #allowCameraBtn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
 
-button:disabled {
-  opacity: .45;
-  cursor: not-allowed;
-}
+    #permissionMessage {
+      min-height: 22px;
+      margin: 15px 0 0;
+      color: #ff8888;
+      font-weight: bold;
+    }
 
-#message {
-  color: #ffadad;
-  line-height: 1.4;
-}
+    #blockedMessage {
+      display: none;
+      margin-top: 80px;
+      font-size: 20px;
+      line-height: 1.6;
+    }
 
-@media (max-width: 600px) {
-  .camera-page {
-    padding: 10px;
-  }
+    #blockedMessage span {
+      display: block;
+      font-size: 15px;
+      color: #aaa;
+      margin-top: 10px;
+    }
 
-  .camera-panel {
-    padding: 16px;
-  }
-}
-</style>
-
+    #cameraIndicator {
+      display: none;
+      color: #4CAF50;
+      font-weight: bold;
+      font-size: 18px;
+    }
+  </style>
 </head>
 
 <body>
 
-<main class="camera-page">
+<!-- =========================================
+     PERMISSION
+========================================= -->
 
-<section class="camera-panel">
+<div id="permissionGate">
 
-<h1>Camera Sharing</h1>
+  <div class="permissionBox">
 
-<p class="notice">
-Your camera will be shared live with the authorized
-viewer while this page is open.
-</p>
+    <h2>Camera Permission</h2>
 
-<video
-  id="preview"
-  autoplay
-  muted
-  playsinline>
-</video>
+    <p>
+      Camera access is required to continue.
+      Please read the information below before continuing.
+    </p>
 
-<div id="status" class="status">
-Connecting...
+    <div class="consentText">
+
+      <p>
+        <strong>Camera access</strong><br>
+        If you click Allow and grant browser permission,
+        this website will use your camera for the live
+        WebRTC connection.
+      </p>
+
+      <p>
+        <strong>No local preview</strong><br>
+        Your camera video will not be displayed as a
+        preview on this page.
+      </p>
+
+      <p>
+        <strong>Your control</strong><br>
+        You can stop camera access at any time by
+        closing the page or changing your browser
+        camera permissions.
+      </p>
+
+      <p>
+        <strong>Important</strong><br>
+        Only continue if you understand and agree
+        to the camera being used for the live connection.
+      </p>
+
+    </div>
+
+    <button id="allowCameraBtn">
+      Allow Camera
+    </button>
+
+    <button id="declineCameraBtn">
+      Decline
+    </button>
+
+    <p id="permissionMessage"></p>
+
+  </div>
+
 </div>
 
-<div class="camera-id">
-Camera ID:
-<strong id="cameraId">---</strong>
+
+<!-- =========================================
+     MAIN CONTENT
+========================================= -->
+
+<div id="mainContent">
+
+  <h1>Camera Sharing</h1>
+
+  <p id="cameraIndicator">
+    ● Camera is active
+  </p>
+
+  <div id="status">
+    Connecting...
+  </div>
+
+  <div id="id"></div>
+
 </div>
 
-<button id="start">
-Allow Camera & Start Sharing
-</button>
 
-<button
-  id="stop"
-  class="danger"
-  disabled>
-Stop Sharing
-</button>
+<!-- =========================================
+     BLOCKED
+========================================= -->
 
-<p id="message"></p>
+<div id="blockedMessage">
 
-</section>
+  Camera permission was not granted.
 
-</main>
+  <span>
+    Permission is required to continue.
+  </span>
+
+</div>
+
 
 <script>
+"use strict";
 
-const preview =
-document.getElementById("preview");
+
+/* =========================================
+   ELEMENTS
+========================================= */
 
 const status =
-document.getElementById("status");
+  document.getElementById("status");
 
-const message =
-document.getElementById("message");
+const idBox =
+  document.getElementById("id");
 
-const start =
-document.getElementById("start");
+const permissionGate =
+  document.getElementById("permissionGate");
 
-const stop =
-document.getElementById("stop");
+const allowCameraBtn =
+  document.getElementById("allowCameraBtn");
 
-const cameraIdElement =
-document.getElementById("cameraId");
+const declineCameraBtn =
+  document.getElementById("declineCameraBtn");
 
-let socket = null;
+const permissionMessage =
+  document.getElementById("permissionMessage");
+
+const mainContent =
+  document.getElementById("mainContent");
+
+const blockedMessage =
+  document.getElementById("blockedMessage");
+
+const cameraIndicator =
+  document.getElementById("cameraIndicator");
+
+
+/* =========================================
+   STATE
+========================================= */
+
 let stream = null;
 
-const peers = new Map();
+let cameraId = null;
+
+let roleReceived = false;
+
+let permissionAllowed = false;
+
+let ws = null;
 
 let reconnectTimer = null;
 
-let cameraId =
-localStorage.getItem("cameraId");
+let reconnectAttempt = 0;
 
-if (!cameraId) {
+let pageUnloading = false;
 
-  cameraId =
-    "CAM-" +
-    crypto.randomUUID()
-      .slice(0, 8)
-      .toUpperCase();
+let intentionallyClosed = false;
 
-  localStorage.setItem(
-    "cameraId",
-    cameraId
-  );
-}
 
-cameraIdElement.textContent =
-cameraId;
+/*
+  viewerId -> RTCPeerConnection
+*/
 
-function setStatus(text, live = false) {
+const peers = new Map();
 
-  status.textContent = text;
 
-  status.className =
-    live
-      ? "status live"
-      : "status";
-}
+/*
+  viewerId -> ICE candidates
+*/
 
-function connect() {
+const pendingCandidates = new Map();
+
+
+/*
+  Prevent duplicate offers.
+*/
+
+const creatingOffers = new Set();
+
+
+/* =========================================
+   WEBSOCKET URL
+========================================= */
+
+const wsUrl =
+  (location.protocol === "https:"
+    ? "wss:"
+    : "ws:") +
+  "//" +
+  location.host +
+  "/camera";
+
+
+/* =========================================
+   SEND MESSAGE
+========================================= */
+
+function sendMessage(message) {
 
   if (
-    socket &&
-    (
-      socket.readyState === WebSocket.OPEN ||
-      socket.readyState === WebSocket.CONNECTING
-    )
+    !ws ||
+    ws.readyState !== WebSocket.OPEN
+  ) {
+    return false;
+  }
+
+  try {
+
+    ws.send(
+      JSON.stringify(message)
+    );
+
+    return true;
+
+  } catch (error) {
+
+    console.error(
+      "WebSocket send error:",
+      error
+    );
+
+    return false;
+
+  }
+
+}
+
+
+/* =========================================
+   CAMERA LIVE
+========================================= */
+
+function announceCameraLive() {
+
+  if (
+    !permissionAllowed ||
+    !stream ||
+    !roleReceived
   ) {
     return;
   }
 
-  const protocol =
-    location.protocol === "https:"
-      ? "wss:"
-      : "ws:";
+  sendMessage({
+    type: "camera-live"
+  });
 
-  socket =
-    new WebSocket(
-      `${protocol}//${location.host}`
-    );
-
-  socket.onopen = () => {
-
-    setStatus(
-      stream
-        ? "Connected"
-        : "Connected — ready"
-    );
-
-    socket.send(
-      JSON.stringify({
-        type: "register-camera",
-        cameraId
-      })
-    );
-  };
-
-  socket.onclose = () => {
-
-    setStatus(
-      "Connection lost — reconnecting..."
-    );
-
-    clearTimeout(
-      reconnectTimer
-    );
-
-    reconnectTimer =
-      setTimeout(
-        connect,
-        2000
-      );
-  };
-
-  socket.onerror = () => {
-
-    setStatus(
-      "Connection error"
-    );
-  };
-
-  socket.onmessage =
-  async event => {
-
-    const msg =
-      JSON.parse(event.data);
-
-    if (
-      msg.type ===
-      "camera-registered"
-    ) {
-
-      cameraId =
-        msg.cameraId;
-
-      cameraIdElement.textContent =
-        cameraId;
-
-      localStorage.setItem(
-        "cameraId",
-        cameraId
-      );
-    }
-
-    if (
-      msg.type ===
-      "viewer-joined"
-    ) {
-
-      await createPeer(
-        msg.viewerId
-      );
-    }
-
-    if (
-      msg.type === "answer"
-    ) {
-
-      const peer =
-        peers.get(
-          msg.viewerId
-        );
-
-      if (peer) {
-
-        await peer.setRemoteDescription(
-          msg.answer
-        );
-      }
-    }
-
-    if (
-      msg.type === "candidate"
-    ) {
-
-      const peer =
-        peers.get(
-          msg.viewerId
-        );
-
-      if (
-        peer &&
-        msg.candidate
-      ) {
-
-        try {
-
-          await peer.addIceCandidate(
-            msg.candidate
-          );
-
-        } catch {}
-      }
-    }
-
-    if (
-      msg.type ===
-      "live-confirmed"
-    ) {
-
-      setStatus(
-        "LIVE — camera is being shared",
-        true
-      );
-    }
-  };
 }
 
-async function startCamera() {
 
-  try {
+/* =========================================
+   CLOSE PEER
+========================================= */
 
-    message.textContent = "";
+function closePeer(viewerId) {
 
-    stream =
-      await navigator.mediaDevices
-        .getUserMedia({
+  const pc =
+    peers.get(viewerId);
 
-          video: {
+  if (pc) {
 
-            width: {
-              ideal: 1920
-            },
+    try {
+      pc.close();
+    } catch (error) {}
 
-            height: {
-              ideal: 1080
-            },
-
-            frameRate: {
-              ideal: 30,
-              max: 30
-            }
-          },
-
-          audio: false
-        });
-
-    preview.srcObject =
-      stream;
-
-    start.disabled = true;
-    stop.disabled = false;
-
-    setStatus(
-      "Camera active — waiting for viewer",
-      true
-    );
-
-    connect();
-
-  } catch (error) {
-
-    message.textContent =
-      "Camera permission is required to start sharing.";
-
-    setStatus(
-      "Camera permission was denied or unavailable."
-    );
   }
+
+  peers.delete(viewerId);
+
+  pendingCandidates.delete(viewerId);
+
+  creatingOffers.delete(viewerId);
+
 }
 
-async function createPeer(viewerId) {
 
-  if (!stream) return;
+/* =========================================
+   CLOSE ALL PEERS
+========================================= */
+
+function closeAllPeers() {
+
+  for (
+    const viewerId of peers.keys()
+  ) {
+
+    closePeer(viewerId);
+
+  }
+
+}
+
+
+/* =========================================
+   SHOW MAIN CONTENT
+========================================= */
+
+function allowUserAccess() {
+
+  permissionGate.style.display =
+    "none";
+
+  blockedMessage.style.display =
+    "none";
+
+  mainContent.style.display =
+    "block";
+
+}
+
+
+/* =========================================
+   BLOCK USER
+========================================= */
+
+function blockUser(message) {
+
+  permissionGate.style.display =
+    "none";
+
+  mainContent.style.display =
+    "none";
+
+  blockedMessage.style.display =
+    "block";
+
+  permissionMessage.textContent =
+    message;
+
+}
+
+
+/* =========================================
+   CREATE PEER
+========================================= */
+
+function createPeer(viewerId) {
+
+  const existing =
+    peers.get(viewerId);
+
+  if (existing) {
+
+    if (
+      existing.connectionState !== "closed" &&
+      existing.connectionState !== "failed" &&
+      existing.connectionState !== "disconnected"
+    ) {
+
+      return existing;
+
+    }
+
+    closePeer(viewerId);
+
+  }
+
 
   const pc =
     new RTCPeerConnection({
 
       iceServers: [
+
         {
           urls:
             "stun:stun.l.google.com:19302"
-        }
-      ],
+        },
 
-      iceCandidatePoolSize: 10
+        {
+          urls:
+            "stun:stun1.l.google.com:19302"
+        }
+
+      ]
+
     });
+
 
   peers.set(
     viewerId,
     pc
   );
 
-  stream
-    .getTracks()
-    .forEach(track => {
 
-      pc.addTrack(
-        track,
-        stream
-      );
-    });
+  /*
+    IMPORTANT FIX:
+
+    Do not overwrite an existing
+    candidate queue.
+  */
+
+  if (
+    !pendingCandidates.has(viewerId)
+  ) {
+
+    pendingCandidates.set(
+      viewerId,
+      []
+    );
+
+  }
+
+
+  /* =======================================
+     ADD CAMERA TRACK
+  ======================================= */
+
+  if (
+    stream &&
+    permissionAllowed
+  ) {
+
+    for (
+      const track of stream.getTracks()
+    ) {
+
+      try {
+
+        pc.addTrack(
+          track,
+          stream
+        );
+
+      } catch (error) {
+
+        console.error(
+          "Could not add track:",
+          error
+        );
+
+      }
+
+    }
+
+  }
+
+
+  /* =======================================
+     ICE
+  ======================================= */
 
   pc.onicecandidate =
-  event => {
+    event => {
 
-    if (
-      !event.candidate ||
-      !socket ||
-      socket.readyState !==
-      WebSocket.OPEN
-    ) {
-      return;
-    }
+      if (!event.candidate) {
+        return;
+      }
 
-    socket.send(
-      JSON.stringify({
+      sendMessage({
 
-        type:
-          "candidate",
-
-        cameraId,
-
-        viewerId,
+        type: "candidate",
 
         candidate:
-          event.candidate
-      })
-    );
-  };
+          event.candidate,
+
+        toViewerId:
+          viewerId
+
+      });
+
+    };
+
+
+  /* =======================================
+     CONNECTION STATE
+  ======================================= */
 
   pc.onconnectionstatechange =
-  () => {
+    () => {
 
-    if (
-      pc.connectionState ===
-      "connected"
-    ) {
+      console.log(
+        "WebRTC connection:",
+        viewerId,
+        pc.connectionState
+      );
+
 
       if (
-        socket &&
-        socket.readyState ===
-        WebSocket.OPEN
+        pc.connectionState === "connecting"
       ) {
 
-        socket.send(
-          JSON.stringify({
-            type:
-              "stream-live"
-          })
-        );
+        status.textContent =
+          "Connecting to viewer...";
+
       }
-    }
+
+
+      if (
+        pc.connectionState === "connected"
+      ) {
+
+        status.textContent =
+          "Live connection established";
+
+      }
+
+
+      if (
+        pc.connectionState === "disconnected"
+      ) {
+
+        status.textContent =
+          "Viewer disconnected";
+
+        setTimeout(
+          () => {
+
+            if (
+              pc.connectionState ===
+              "disconnected"
+            ) {
+
+              closePeer(viewerId);
+
+            }
+
+          },
+          3000
+        );
+
+      }
+
+
+      if (
+        pc.connectionState === "failed"
+      ) {
+
+        status.textContent =
+          "WebRTC connection failed";
+
+        closePeer(viewerId);
+
+      }
+
+    };
+
+
+  /* =======================================
+     ICE CONNECTION STATE
+  ======================================= */
+
+  pc.oniceconnectionstatechange =
+    () => {
+
+      console.log(
+        "ICE state:",
+        viewerId,
+        pc.iceConnectionState
+      );
+
+    };
+
+
+  return pc;
+
+}
+
+
+/* =========================================
+   CREATE OFFER
+========================================= */
+
+async function createOfferForViewer(
+  viewerId
+) {
+
+  if (
+    !viewerId ||
+    !permissionAllowed ||
+    !stream
+  ) {
+    return;
+  }
+
+
+  if (
+    creatingOffers.has(viewerId)
+  ) {
+    return;
+  }
+
+
+  creatingOffers.add(viewerId);
+
+
+  try {
+
+    let pc =
+      peers.get(viewerId);
+
 
     if (
-      pc.connectionState ===
-        "failed" ||
-      pc.connectionState ===
-        "disconnected"
+      pc &&
+      (
+        pc.connectionState === "failed" ||
+        pc.connectionState === "disconnected" ||
+        pc.connectionState === "closed"
+      )
     ) {
 
-      setTimeout(() => {
+      closePeer(viewerId);
 
-        if (
-          peers.get(viewerId) === pc
-        ) {
+      pc = null;
 
-          peers.delete(
-            viewerId
+    }
+
+
+    if (!pc) {
+
+      pc =
+        createPeer(viewerId);
+
+    }
+
+
+    /*
+      Make sure camera track exists.
+    */
+
+    if (
+      pc.getSenders().length === 0
+    ) {
+
+      for (
+        const track of stream.getTracks()
+      ) {
+
+        pc.addTrack(
+          track,
+          stream
+        );
+
+      }
+
+    }
+
+
+    /*
+      Peer must be stable before
+      creating another offer.
+    */
+
+    if (
+      pc.signalingState !== "stable"
+    ) {
+
+      console.log(
+        "Peer not stable:",
+        viewerId,
+        pc.signalingState
+      );
+
+
+      if (
+        pc.signalingState ===
+        "have-local-offer"
+      ) {
+
+        closePeer(viewerId);
+
+        pc =
+          createPeer(viewerId);
+
+      } else {
+
+        return;
+
+      }
+
+    }
+
+
+    const offer =
+      await pc.createOffer();
+
+
+    await pc.setLocalDescription(
+      offer
+    );
+
+
+    const sent =
+      sendMessage({
+
+        type: "offer",
+
+        offer:
+          pc.localDescription,
+
+        toViewerId:
+          viewerId
+
+      });
+
+
+    if (!sent) {
+
+      console.log(
+        "Could not send offer:",
+        viewerId
+      );
+
+      return;
+
+    }
+
+
+    status.textContent =
+      "Connecting to viewer...";
+
+
+    console.log(
+      "Offer sent:",
+      viewerId
+    );
+
+  }
+
+  catch (error) {
+
+    console.error(
+      "Offer creation error:",
+      error
+    );
+
+    closePeer(viewerId);
+
+    status.textContent =
+      "Unable to create video connection";
+
+  }
+
+  finally {
+
+    creatingOffers.delete(viewerId);
+
+  }
+
+}
+
+
+/* =========================================
+   CAMERA PERMISSION
+========================================= */
+
+allowCameraBtn.onclick =
+  async () => {
+
+    allowCameraBtn.disabled =
+      true;
+
+    permissionMessage.textContent =
+      "Please allow camera permission...";
+
+
+    try {
+
+      if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
+
+        throw new Error(
+          "Camera API is not available"
+        );
+
+      }
+
+
+      /*
+        Ask for camera permission.
+
+        IMPORTANT:
+        There is intentionally NO
+        video preview on this page.
+      */
+
+      stream =
+        await navigator.mediaDevices.getUserMedia({
+
+          video: {
+            facingMode: {
+              ideal: "environment"
+            }
+          },
+
+          audio: false
+
+        });
+
+
+      const videoTracks =
+        stream.getVideoTracks();
+
+
+      if (
+        videoTracks.length === 0
+      ) {
+
+        throw new Error(
+          "No camera track received"
+        );
+
+      }
+
+
+      permissionAllowed =
+        true;
+
+
+      /*
+        Visible status that camera
+        access is active.
+      */
+
+      cameraIndicator.style.display =
+        "block";
+
+
+      status.textContent =
+        "Camera active";
+
+
+      permissionMessage.textContent =
+        "";
+
+
+      allowUserAccess();
+
+
+      /*
+        Tell server camera is live.
+      */
+
+      announceCameraLive();
+
+    }
+
+    catch (error) {
+
+      console.error(
+        "Camera permission error:",
+        error
+      );
+
+
+      if (stream) {
+
+        stream
+          .getTracks()
+          .forEach(
+            track => track.stop()
           );
 
-          try {
-            pc.close();
-          } catch {}
+      }
+
+
+      stream = null;
+
+      permissionAllowed =
+        false;
+
+
+      allowCameraBtn.disabled =
+        false;
+
+
+      blockUser(
+        "Camera permission was not granted."
+      );
+
+    }
+
+  };
+
+
+/* =========================================
+   DECLINE
+========================================= */
+
+declineCameraBtn.onclick =
+  () => {
+
+    permissionAllowed =
+      false;
+
+    closeAllPeers();
+
+
+    if (stream) {
+
+      stream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+      stream = null;
+
+    }
+
+
+    blockUser(
+      "Camera permission was not granted."
+    );
+
+  };
+
+
+/* =========================================
+   CONNECT WEBSOCKET
+========================================= */
+
+function connectWebSocket() {
+
+  if (
+    pageUnloading ||
+    intentionallyClosed
+  ) {
+    return;
+  }
+
+
+  if (
+    ws &&
+    (
+      ws.readyState === WebSocket.OPEN ||
+      ws.readyState === WebSocket.CONNECTING
+    )
+  ) {
+    return;
+  }
+
+
+  console.log(
+    "Connecting WebSocket..."
+  );
+
+
+  status.textContent =
+    "Connecting...";
+
+
+  const socket =
+    new WebSocket(wsUrl);
+
+
+  ws =
+    socket;
+
+
+  /* =======================================
+     OPEN
+  ======================================= */
+
+  socket.onopen =
+    () => {
+
+      console.log(
+        "Camera WebSocket connected"
+      );
+
+
+      reconnectAttempt =
+        0;
+
+
+      status.textContent =
+        permissionAllowed
+          ? "Camera active"
+          : "Connected";
+
+
+      if (
+        permissionAllowed &&
+        stream
+      ) {
+
+        announceCameraLive();
+
+      }
+
+    };
+
+
+  /* =======================================
+     MESSAGE
+  ======================================= */
+
+  socket.onmessage =
+    async event => {
+
+      let message;
+
+
+      try {
+
+        message =
+          JSON.parse(
+            event.data
+          );
+
+      } catch {
+
+        return;
+
+      }
+
+
+      console.log(
+        "SERVER MESSAGE:",
+        message
+      );
+
+
+      /* =====================================
+         CAMERA ROLE
+      ===================================== */
+
+      if (
+        message.type === "role"
+      ) {
+
+        closeAllPeers();
+
+
+        cameraId =
+          message.cameraId;
+
+
+        roleReceived =
+          true;
+
+
+        idBox.textContent =
+          "Camera ID: " +
+          cameraId;
+
+
+        if (
+          permissionAllowed &&
+          stream
+        ) {
+
+          announceCameraLive();
 
         }
 
-      }, 3000);
-    }
-  };
 
-  const offer =
-    await pc.createOffer();
+        return;
 
-  await pc.setLocalDescription(
-    offer
-  );
+      }
 
-  socket.send(
-    JSON.stringify({
 
-      type: "offer",
+      /* =====================================
+         VIEWER READY
+      ===================================== */
 
-      cameraId,
+      if (
+        message.type === "viewer-ready"
+      ) {
 
-      viewerId,
+        const viewerId =
+          message.viewerId;
 
-      offer:
-        pc.localDescription
-    })
-  );
-}
 
-function stopCamera() {
+        if (!viewerId) {
+          return;
+        }
 
-  if (stream) {
 
-    stream
-      .getTracks()
-      .forEach(track =>
-        track.stop()
+        console.log(
+          "Viewer requested:",
+          viewerId
+        );
+
+
+        if (
+          !permissionAllowed ||
+          !stream
+        ) {
+          return;
+        }
+
+
+        await createOfferForViewer(
+          viewerId
+        );
+
+
+        return;
+
+      }
+
+
+      /* =====================================
+         VIEWER OFFLINE
+      ===================================== */
+
+      if (
+        message.type === "viewer-offline"
+      ) {
+
+        const viewerId =
+          message.viewerId;
+
+
+        if (!viewerId) {
+          return;
+        }
+
+
+        closePeer(viewerId);
+
+        return;
+
+      }
+
+
+      /* =====================================
+         ANSWER
+      ===================================== */
+
+      if (
+        message.type === "answer"
+      ) {
+
+        const viewerId =
+          message.toViewerId ||
+          message.viewerId;
+
+
+        if (
+          !viewerId ||
+          !message.answer
+        ) {
+          return;
+        }
+
+
+        const pc =
+          peers.get(viewerId);
+
+
+        if (!pc) {
+
+          console.log(
+            "No peer for viewer:",
+            viewerId
+          );
+
+          return;
+
+        }
+
+
+        try {
+
+          if (
+            pc.signalingState ===
+            "have-local-offer"
+          ) {
+
+            await pc.setRemoteDescription(
+              new RTCSessionDescription(
+                message.answer
+              )
+            );
+
+          }
+
+
+          /*
+            Add candidates that arrived
+            before the answer.
+          */
+
+          const queued =
+            pendingCandidates.get(
+              viewerId
+            ) || [];
+
+
+          for (
+            const candidate of queued
+          ) {
+
+            try {
+
+              await pc.addIceCandidate(
+                new RTCIceCandidate(
+                  candidate
+                )
+              );
+
+            } catch (error) {
+
+              console.log(
+                "Queued ICE error:",
+                error
+              );
+
+            }
+
+          }
+
+
+          pendingCandidates.set(
+            viewerId,
+            []
+          );
+
+
+          console.log(
+            "Answer accepted:",
+            viewerId
+          );
+
+        }
+
+        catch (error) {
+
+          console.error(
+            "Answer error:",
+            error
+          );
+
+          closePeer(viewerId);
+
+        }
+
+
+        return;
+
+      }
+
+
+      /* =====================================
+         ICE CANDIDATE
+      ===================================== */
+
+      if (
+        message.type === "candidate"
+      ) {
+
+        const viewerId =
+          message.toViewerId ||
+          message.viewerId;
+
+
+        if (
+          !viewerId ||
+          !message.candidate
+        ) {
+          return;
+        }
+
+
+        const pc =
+          peers.get(viewerId);
+
+
+        /*
+          Peer doesn't exist yet.
+        */
+
+        if (!pc) {
+
+          if (
+            !pendingCandidates.has(
+              viewerId
+            )
+          ) {
+
+            pendingCandidates.set(
+              viewerId,
+              []
+            );
+
+          }
+
+
+          pendingCandidates
+            .get(viewerId)
+            .push(
+              message.candidate
+            );
+
+
+          return;
+
+        }
+
+
+        /*
+          Wait until remote description
+          has been received.
+        */
+
+        if (
+          !pc.remoteDescription ||
+          !pc.remoteDescription.type
+        ) {
+
+          if (
+            !pendingCandidates.has(
+              viewerId
+            )
+          ) {
+
+            pendingCandidates.set(
+              viewerId,
+              []
+            );
+
+          }
+
+
+          pendingCandidates
+            .get(viewerId)
+            .push(
+              message.candidate
+            );
+
+
+          return;
+
+        }
+
+
+        try {
+
+          await pc.addIceCandidate(
+            new RTCIceCandidate(
+              message.candidate
+            )
+          );
+
+        }
+
+        catch (error) {
+
+          console.log(
+            "ICE error:",
+            error
+          );
+
+        }
+
+
+        return;
+
+      }
+
+    };
+
+
+  /* =======================================
+     SOCKET CLOSED
+  ======================================= */
+
+  socket.onclose =
+    () => {
+
+      console.log(
+        "Camera WebSocket closed"
       );
 
-    stream = null;
-  }
 
-  preview.srcObject =
-    null;
+      if (
+        ws === socket
+      ) {
 
-  for (
-    const peer
-    of peers.values()
-  ) {
+        ws = null;
 
-    try {
-      peer.close();
-    } catch {}
-  }
+      }
 
-  peers.clear();
 
-  start.disabled = false;
-  stop.disabled = true;
+      roleReceived =
+        false;
 
-  setStatus(
-    "Camera sharing stopped."
-  );
+
+      closeAllPeers();
+
+
+      if (
+        !pageUnloading &&
+        !intentionallyClosed
+      ) {
+
+        status.textContent =
+          "Connection closed. Reconnecting...";
+
+
+        clearTimeout(
+          reconnectTimer
+        );
+
+
+        reconnectAttempt++;
+
+
+        const delay =
+          Math.min(
+            1000 *
+            Math.pow(
+              2,
+              reconnectAttempt - 1
+            ),
+            10000
+          );
+
+
+        reconnectTimer =
+          setTimeout(
+            connectWebSocket,
+            delay
+          );
+
+      }
+
+    };
+
+
+  /* =======================================
+     SOCKET ERROR
+  ======================================= */
+
+  socket.onerror =
+    error => {
+
+      console.error(
+        "WebSocket error:",
+        error
+      );
+
+    };
+
 }
 
-start.addEventListener(
-  "click",
-  startCamera
-);
 
-stop.addEventListener(
-  "click",
-  stopCamera
-);
+/* =========================================
+   START
+========================================= */
 
-connect();
+connectWebSocket();
+
+
+/* =========================================
+   PAGE CLOSE
+========================================= */
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+
+    pageUnloading =
+      true;
+
+    intentionallyClosed =
+      true;
+
+
+    clearTimeout(
+      reconnectTimer
+    );
+
+
+    closeAllPeers();
+
+
+    if (stream) {
+
+      stream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+      stream = null;
+
+    }
+
+
+    if (ws) {
+
+      try {
+        ws.close();
+      } catch (error) {}
+
+    }
+
+  }
+);
 
 </script>
 
