@@ -1,358 +1,1285 @@
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
-const crypto = require("crypto");
-const path = require("path");
+"use strict";
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+/* =========================================
+   ELEMENTS
+========================================= */
 
-app.use(express.static(__dirname));
+const status = document.getElementById("status");
+const idBox = document.getElementById("id");
 
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
+const permissionGate =
+  document.getElementById("permissionGate");
 
-app.get("/camera", (req, res) => {
-  res.sendFile(path.join(__dirname, "camera.html"));
-});
+const allowCameraBtn =
+  document.getElementById("allowCameraBtn");
 
-app.get("/viewer", (req, res) => {
-  res.sendFile(path.join(__dirname, "viewer.html"));
-});
+const declineCameraBtn =
+  document.getElementById("declineCameraBtn");
 
-const cameras = new Map();
+const permissionMessage =
+  document.getElementById("permissionMessage");
 
-const PORT = process.env.PORT || 3000;
+const mainContent =
+  document.getElementById("mainContent");
+
+const blockedMessage =
+  document.getElementById("blockedMessage");
+
+const cameraIndicator =
+  document.getElementById("cameraIndicator");
+
+
+/* =========================================
+   STATE
+========================================= */
+
+let stream = null;
+let cameraId = null;
+let roleReceived = false;
+let permissionAllowed = false;
+
+let ws = null;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+
+let pageUnloading = false;
+let intentionallyClosed = false;
+
 
 /*
-  Set these as environment variables on your server:
-
-  NTFY_TOPIC=your-private-random-topic
-  NTFY_SERVER=https://ntfy.sh
+  viewerId -> RTCPeerConnection
 */
+const peers = new Map();
 
-const NTFY_SERVER =
-  process.env.NTFY_SERVER || "https://ntfy.sh";
 
-const NTFY_TOPIC =
-  process.env.NTFY_TOPIC || "";
+/*
+  viewerId -> ICE candidates
+*/
+const pendingCandidates = new Map();
 
-function makeId() {
-  return crypto.randomBytes(8).toString("hex");
-}
 
-function send(ws, data) {
+/*
+  Prevent duplicate offers.
+*/
+const creatingOffers = new Set();
+
+
+/* =========================================
+   WEBSOCKET URL
+========================================= */
+
+const wsUrl =
+  (location.protocol === "https:" ? "wss:" : "ws:") +
+  "//" +
+  location.host +
+  "/camera";
+
+
+/* =========================================
+   SEND MESSAGE
+========================================= */
+
+function sendMessage(message) {
+
   if (
-    ws &&
-    ws.readyState === WebSocket.OPEN
+    !ws ||
+    ws.readyState !== WebSocket.OPEN
   ) {
-    ws.send(JSON.stringify(data));
-  }
-}
-
-async function notifyNtfy(title, message, tags = "") {
-  if (!NTFY_TOPIC) {
-    console.log(
-      "NTFY_TOPIC is not configured:",
-      title,
-      message
-    );
-    return;
+    return false;
   }
 
   try {
-    await fetch(
-      `${NTFY_SERVER}/${encodeURIComponent(NTFY_TOPIC)}`,
-      {
-        method: "POST",
-        headers: {
-          "Title": title,
-          "Priority": "4",
-          "Tags": tags
-        },
-        body: message
-      }
-    );
+
+    ws.send(JSON.stringify(message));
+
+    return true;
+
   } catch (error) {
+
     console.error(
-      "ntfy notification failed:",
-      error.message
+      "WebSocket send error:",
+      error
     );
+
+    return false;
   }
 }
 
-function broadcastCameraList() {
-  const list = [...cameras.keys()];
 
-  for (const client of wss.clients) {
-    if (client.role === "viewer") {
-      send(client, {
-        type: "camera-list",
-        cameras: list
-      });
-    }
+/* =========================================
+   CAMERA LIVE
+========================================= */
+
+function announceCameraLive() {
+
+  if (
+    !permissionAllowed ||
+    !stream ||
+    !roleReceived
+  ) {
+    return;
   }
-}
 
-async function cameraBecameLive(cameraId) {
-  const camera = cameras.get(cameraId);
-
-  if (!camera || camera.live) return;
-
-  camera.live = true;
-
-  send(camera.ws, {
-    type: "live-confirmed",
-    cameraId
+  sendMessage({
+    type: "camera-live"
   });
-
-  await notifyNtfy(
-    "Camera is LIVE",
-    `Camera ${cameraId} is now LIVE.`,
-    "camera,red_circle"
-  );
-
-  broadcastCameraList();
 }
 
-async function cameraWentOffline(cameraId) {
-  const camera = cameras.get(cameraId);
 
-  if (!camera || !camera.live) return;
+/* =========================================
+   CLOSE PEER
+========================================= */
 
-  camera.live = false;
+function closePeer(viewerId) {
 
-  await notifyNtfy(
-    "Camera OFFLINE",
-    `Camera ${cameraId} is now offline.`,
-    "camera,black_circle"
-  );
+  const pc = peers.get(viewerId);
 
-  broadcastCameraList();
-}
-
-wss.on("connection", (ws) => {
-  ws.role = null;
-  ws.cameraId = null;
-  ws.viewerId = null;
-
-  ws.on("message", async (raw) => {
-    let msg;
+  if (pc) {
 
     try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
+      pc.close();
+    } catch (error) {}
+
+  }
+
+  peers.delete(viewerId);
+  pendingCandidates.delete(viewerId);
+  creatingOffers.delete(viewerId);
+}
+
+
+/* =========================================
+   CLOSE ALL PEERS
+========================================= */
+
+function closeAllPeers() {
+
+  for (const viewerId of peers.keys()) {
+    closePeer(viewerId);
+  }
+
+}
+
+
+/* =========================================
+   SHOW MAIN
+========================================= */
+
+function allowUserAccess() {
+
+  permissionGate.style.display = "none";
+  blockedMessage.style.display = "none";
+  mainContent.style.display = "block";
+
+}
+
+
+/* =========================================
+   BLOCK USER
+========================================= */
+
+function blockUser(message) {
+
+  permissionGate.style.display = "none";
+  mainContent.style.display = "none";
+  blockedMessage.style.display = "block";
+
+  permissionMessage.textContent = message;
+}
+
+
+/* =========================================
+   CREATE PEER
+========================================= */
+
+function createPeer(viewerId) {
+
+  let existing = peers.get(viewerId);
+
+  if (existing) {
+
+    const state = existing.connectionState;
+
+    if (
+      state !== "closed" &&
+      state !== "failed"
+    ) {
+      return existing;
     }
 
-    // CAMERA REGISTRATION
-    if (msg.type === "register-camera") {
-      let cameraId =
-        typeof msg.cameraId === "string" &&
-        msg.cameraId.trim()
-          ? msg.cameraId.trim().slice(0, 80)
-          : makeId();
+    closePeer(viewerId);
+  }
 
-      const oldCamera = cameras.get(cameraId);
 
-      if (oldCamera) {
-        send(oldCamera.ws, {
-          type: "replaced",
-          message: "This camera session was replaced."
-        });
+  const pc =
+    new RTCPeerConnection({
 
-        try {
-          oldCamera.ws.close();
-        } catch {}
+      /*
+        STUN servers.
+        More reliable TURN may be needed
+        for difficult networks.
+      */
+
+      iceServers: [
+
+        {
+          urls: "stun:stun.l.google.com:19302"
+        },
+
+        {
+          urls: "stun:stun1.l.google.com:19302"
+        }
+
+      ],
+
+      /*
+        Prefer the video connection.
+      */
+
+      bundlePolicy: "max-bundle",
+
+      rtcpMuxPolicy: "require"
+
+    });
+
+
+  peers.set(
+    viewerId,
+    pc
+  );
+
+
+  if (!pendingCandidates.has(viewerId)) {
+
+    pendingCandidates.set(
+      viewerId,
+      []
+    );
+
+  }
+
+
+  /* =======================================
+     ADD CAMERA TRACK
+  ======================================= */
+
+  if (
+    stream &&
+    permissionAllowed
+  ) {
+
+    const tracks =
+      stream.getTracks();
+
+    for (const track of tracks) {
+
+      try {
+
+        pc.addTrack(
+          track,
+          stream
+        );
+
+      } catch (error) {
+
+        console.error(
+          "addTrack error:",
+          error
+        );
+
       }
 
-      ws.role = "camera";
-      ws.cameraId = cameraId;
-
-      cameras.set(cameraId, {
-        ws,
-        live: false,
-        viewers: new Set()
-      });
-
-      send(ws, {
-        type: "camera-registered",
-        cameraId
-      });
-
-      broadcastCameraList();
-      return;
     }
 
-    // VIEWER REGISTRATION
-    if (msg.type === "register-viewer") {
-      ws.role = "viewer";
-      ws.viewerId = makeId();
+  }
 
-      send(ws, {
-        type: "viewer-registered",
-        viewerId: ws.viewerId,
-        cameras: [...cameras.keys()]
-      });
 
-      return;
-    }
+  /* =======================================
+     ICE
+  ======================================= */
 
-    // VIEWER WATCHES CAMERA
-    if (msg.type === "watch") {
-      if (ws.role !== "viewer") return;
+  pc.onicecandidate =
+    event => {
 
-      const camera = cameras.get(msg.cameraId);
-
-      if (!camera) {
-        send(ws, {
-          type: "camera-offline",
-          cameraId: msg.cameraId
-        });
+      if (!event.candidate) {
         return;
       }
 
-      camera.viewers.add(ws);
+      sendMessage({
 
-      send(camera.ws, {
-        type: "viewer-joined",
-        cameraId: msg.cameraId,
-        viewerId: ws.viewerId
+        type: "candidate",
+
+        candidate:
+          event.candidate,
+
+        toViewerId:
+          viewerId
+
       });
 
-      return;
-    }
+    };
 
-    // VIEWER LEAVES CAMERA
-    if (msg.type === "unwatch") {
-      const camera = cameras.get(msg.cameraId);
 
-      if (camera) {
-        camera.viewers.delete(ws);
+  /* =======================================
+     CONNECTION STATE
+  ======================================= */
 
-        if (camera.viewers.size === 0) {
-          await cameraWentOffline(msg.cameraId);
-        }
+  pc.onconnectionstatechange =
+    () => {
+
+      const state =
+        pc.connectionState;
+
+      console.log(
+        "WebRTC:",
+        viewerId,
+        state
+      );
+
+
+      if (state === "connecting") {
+
+        status.textContent =
+          "Connecting...";
+
       }
 
-      return;
-    }
 
-    // CAMERA CONFIRMS THAT STREAM IS ACTIVE
-    if (msg.type === "stream-live") {
-      if (ws.role === "camera" && ws.cameraId) {
-        await cameraBecameLive(ws.cameraId);
+      if (state === "connected") {
+
+        status.textContent =
+          "Live";
+
       }
 
+
+      if (state === "failed") {
+
+        closePeer(viewerId);
+
+        status.textContent =
+          "Connection failed";
+
+      }
+
+
+      if (state === "closed") {
+
+        closePeer(viewerId);
+
+      }
+
+    };
+
+
+  /* =======================================
+     ICE STATE
+  ======================================= */
+
+  pc.oniceconnectionstatechange =
+    () => {
+
+      console.log(
+        "ICE:",
+        viewerId,
+        pc.iceConnectionState
+      );
+
+    };
+
+
+  return pc;
+}
+
+
+/* =========================================
+   CREATE OFFER
+========================================= */
+
+async function createOfferForViewer(
+  viewerId
+) {
+
+  if (
+    !viewerId ||
+    !permissionAllowed ||
+    !stream
+  ) {
+    return;
+  }
+
+
+  if (
+    creatingOffers.has(viewerId)
+  ) {
+    return;
+  }
+
+
+  creatingOffers.add(viewerId);
+
+
+  try {
+
+    let pc =
+      peers.get(viewerId);
+
+
+    /*
+      Reuse healthy connection.
+    */
+
+    if (pc) {
+
+      if (
+        pc.connectionState === "failed" ||
+        pc.connectionState === "closed"
+      ) {
+
+        closePeer(viewerId);
+
+        pc = null;
+      }
+
+    }
+
+
+    if (!pc) {
+
+      pc =
+        createPeer(viewerId);
+
+    }
+
+
+    /*
+      Don't create another offer
+      while negotiation is running.
+    */
+
+    if (
+      pc.signalingState !== "stable"
+    ) {
+
+      console.log(
+        "Skipping offer. State:",
+        pc.signalingState
+      );
+
       return;
     }
 
-    // WEBRTC OFFER
-    if (msg.type === "offer") {
-      const camera = cameras.get(msg.cameraId);
 
-      if (!camera) return;
+    const offer =
+      await pc.createOffer({
 
-      send(camera.ws, {
-        type: "offer",
-        cameraId: msg.cameraId,
-        viewerId: msg.viewerId,
-        offer: msg.offer
+        /*
+          Keep normal WebRTC negotiation.
+        */
+
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false
+
       });
 
-      return;
-    }
 
-    // WEBRTC ANSWER
-    if (msg.type === "answer") {
-      const camera = cameras.get(msg.cameraId);
+    await pc.setLocalDescription(
+      offer
+    );
 
-      if (!camera) return;
 
-      for (const client of wss.clients) {
-        if (
-          client.role === "viewer" &&
-          client.viewerId === msg.viewerId
-        ) {
-          send(client, {
-            type: "answer",
-            cameraId: msg.cameraId,
-            viewerId: msg.viewerId,
-            answer: msg.answer
-          });
-        }
-      }
+    /*
+      Send only after local description
+      is ready.
+    */
 
-      return;
-    }
+    sendMessage({
 
-    // ICE CANDIDATE
-    if (msg.type === "candidate") {
-      const camera = cameras.get(msg.cameraId);
+      type: "offer",
 
-      if (!camera) return;
+      offer:
+        pc.localDescription,
 
-      if (ws.role === "viewer") {
-        send(camera.ws, {
-          type: "candidate",
-          cameraId: msg.cameraId,
-          viewerId: ws.viewerId,
-          candidate: msg.candidate
-        });
-      } else if (ws.role === "camera") {
-        for (const client of wss.clients) {
-          if (
-            client.role === "viewer" &&
-            client.viewerId === msg.viewerId
-          ) {
-            send(client, {
-              type: "candidate",
-              cameraId: msg.cameraId,
-              viewerId: msg.viewerId,
-              candidate: msg.candidate
-            });
-          }
-        }
-      }
+      toViewerId:
+        viewerId
 
-      return;
-    }
-  });
+    });
 
-  ws.on("close", async () => {
-    // CAMERA CLOSED
-    if (ws.role === "camera" && ws.cameraId) {
-      const camera = cameras.get(ws.cameraId);
 
-      if (camera && camera.ws === ws) {
-        const cameraId = ws.cameraId;
-        cameras.delete(cameraId);
+    status.textContent =
+      "Connecting...";
 
-        await notifyNtfy(
-          "Camera OFFLINE",
-          `Camera ${cameraId} closed or disconnected.`,
-          "camera,black_circle"
+  }
+
+  catch (error) {
+
+    console.error(
+      "Offer error:",
+      error
+    );
+
+    closePeer(viewerId);
+
+  }
+
+  finally {
+
+    creatingOffers.delete(
+      viewerId
+    );
+
+  }
+}
+
+
+/* =========================================
+   CAMERA PERMISSION
+========================================= */
+
+allowCameraBtn.onclick =
+  async () => {
+
+    allowCameraBtn.disabled =
+      true;
+
+    permissionMessage.textContent =
+      "Please allow camera permission...";
+
+
+    try {
+
+      if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
+
+        throw new Error(
+          "Camera API unavailable"
         );
 
-        broadcastCameraList();
       }
+
+
+      /*
+        LOWER RESOLUTION + LOWER FPS
+        = LESS BANDWIDTH
+        = LESS LAG
+
+        1280x720 at 24 FPS is a good
+        starting point.
+      */
+
+      stream =
+        await navigator.mediaDevices.getUserMedia({
+
+          video: {
+
+            width: {
+              ideal: 1280,
+              max: 1280
+            },
+
+            height: {
+              ideal: 720,
+              max: 720
+            },
+
+            frameRate: {
+              ideal: 24,
+              max: 30
+            },
+
+            facingMode: {
+              ideal: "environment"
+            }
+
+          },
+
+          audio: false
+
+        });
+
+
+      const videoTrack =
+        stream.getVideoTracks()[0];
+
+
+      if (!videoTrack) {
+
+        throw new Error(
+          "No camera track"
+        );
+
+      }
+
+
+      /*
+        Tell browser the camera settings
+        we prefer.
+      */
+
+      try {
+
+        await videoTrack.applyConstraints({
+
+          width: {
+            ideal: 1280,
+            max: 1280
+          },
+
+          height: {
+            ideal: 720,
+            max: 720
+          },
+
+          frameRate: {
+            ideal: 24,
+            max: 30
+          }
+
+        });
+
+      } catch (error) {
+
+        console.log(
+          "Camera constraints:",
+          error
+        );
+
+      }
+
+
+      console.log(
+        "Camera settings:",
+        videoTrack.getSettings()
+      );
+
+
+      permissionAllowed =
+        true;
+
+
+      cameraIndicator.style.display =
+        "block";
+
+
+      status.textContent =
+        "Camera active";
+
+
+      permissionMessage.textContent =
+        "";
+
+
+      allowUserAccess();
+
+
+      /*
+        Tell server camera is live.
+      */
+
+      announceCameraLive();
+
     }
 
-    // VIEWER CLOSED
-    if (ws.role === "viewer") {
-      for (const [cameraId, camera] of cameras) {
-        camera.viewers.delete(ws);
+    catch (error) {
 
-        if (camera.viewers.size === 0) {
-          await cameraWentOffline(cameraId);
+      console.error(
+        "Camera error:",
+        error
+      );
+
+
+      if (stream) {
+
+        stream
+          .getTracks()
+          .forEach(
+            track => track.stop()
+          );
+
+      }
+
+
+      stream = null;
+
+      permissionAllowed =
+        false;
+
+      allowCameraBtn.disabled =
+        false;
+
+
+      blockUser(
+        "Camera permission was not granted."
+      );
+
+    }
+
+  };
+
+
+/* =========================================
+   DECLINE
+========================================= */
+
+declineCameraBtn.onclick =
+  () => {
+
+    permissionAllowed =
+      false;
+
+    closeAllPeers();
+
+
+    if (stream) {
+
+      stream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+      stream = null;
+
+    }
+
+
+    blockUser(
+      "Camera permission was not granted."
+    );
+
+  };
+
+
+/* =========================================
+   CONNECT WEBSOCKET
+========================================= */
+
+function connectWebSocket() {
+
+  if (
+    pageUnloading ||
+    intentionallyClosed
+  ) {
+    return;
+  }
+
+
+  if (
+    ws &&
+    (
+      ws.readyState === WebSocket.OPEN ||
+      ws.readyState === WebSocket.CONNECTING
+    )
+  ) {
+    return;
+  }
+
+
+  status.textContent =
+    "Connecting...";
+
+
+  const socket =
+    new WebSocket(wsUrl);
+
+
+  ws = socket;
+
+
+  /* =======================================
+     OPEN
+  ======================================= */
+
+  socket.onopen =
+    () => {
+
+      console.log(
+        "WebSocket connected"
+      );
+
+
+      reconnectAttempt = 0;
+
+
+      status.textContent =
+        permissionAllowed
+          ? "Camera active"
+          : "Connected";
+
+
+      if (
+        permissionAllowed &&
+        stream
+      ) {
+
+        announceCameraLive();
+
+      }
+
+    };
+
+
+  /* =======================================
+     MESSAGE
+  ======================================= */
+
+  socket.onmessage =
+    async event => {
+
+      let message;
+
+
+      try {
+
+        message =
+          JSON.parse(
+            event.data
+          );
+
+      } catch (error) {
+
+        return;
+
+      }
+
+
+      /* =====================================
+         ROLE
+      ===================================== */
+
+      if (
+        message.type === "role"
+      ) {
+
+        closeAllPeers();
+
+
+        cameraId =
+          message.cameraId;
+
+
+        roleReceived =
+          true;
+
+
+        idBox.textContent =
+          "Camera ID: " +
+          cameraId;
+
+
+        if (
+          permissionAllowed &&
+          stream
+        ) {
+
+          announceCameraLive();
+
         }
-      }
-    }
-  });
-});
 
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+
+        return;
+      }
+
+
+      /* =====================================
+         VIEWER READY
+      ===================================== */
+
+      if (
+        message.type === "viewer-ready"
+      ) {
+
+        const viewerId =
+          message.viewerId;
+
+
+        if (
+          !viewerId ||
+          !permissionAllowed ||
+          !stream
+        ) {
+          return;
+        }
+
+
+        await createOfferForViewer(
+          viewerId
+        );
+
+
+        return;
+      }
+
+
+      /* =====================================
+         VIEWER OFFLINE
+      ===================================== */
+
+      if (
+        message.type === "viewer-offline"
+      ) {
+
+        const viewerId =
+          message.viewerId;
+
+
+        if (viewerId) {
+
+          closePeer(viewerId);
+
+        }
+
+
+        return;
+      }
+
+
+      /* =====================================
+         ANSWER
+      ===================================== */
+
+      if (
+        message.type === "answer"
+      ) {
+
+        const viewerId =
+          message.toViewerId ||
+          message.viewerId;
+
+
+        if (
+          !viewerId ||
+          !message.answer
+        ) {
+          return;
+        }
+
+
+        const pc =
+          peers.get(viewerId);
+
+
+        if (!pc) {
+          return;
+        }
+
+
+        try {
+
+          if (
+            pc.signalingState ===
+            "have-local-offer"
+          ) {
+
+            await pc.setRemoteDescription(
+              new RTCSessionDescription(
+                message.answer
+              )
+            );
+
+          }
+
+
+          /*
+            Add queued ICE candidates.
+          */
+
+          const candidates =
+            pendingCandidates.get(
+              viewerId
+            ) || [];
+
+
+          for (
+            const candidate of candidates
+          ) {
+
+            try {
+
+              await pc.addIceCandidate(
+                new RTCIceCandidate(
+                  candidate
+                )
+              );
+
+            } catch (error) {
+
+              console.log(
+                "ICE candidate error:",
+                error
+              );
+
+            }
+
+          }
+
+
+          pendingCandidates.set(
+            viewerId,
+            []
+          );
+
+
+        } catch (error) {
+
+          console.error(
+            "Answer error:",
+            error
+          );
+
+          closePeer(viewerId);
+
+        }
+
+
+        return;
+      }
+
+
+      /* =====================================
+         ICE CANDIDATE
+      ===================================== */
+
+      if (
+        message.type === "candidate"
+      ) {
+
+        const viewerId =
+          message.toViewerId ||
+          message.viewerId;
+
+
+        if (
+          !viewerId ||
+          !message.candidate
+        ) {
+          return;
+        }
+
+
+        const pc =
+          peers.get(viewerId);
+
+
+        /*
+          Peer doesn't exist yet.
+        */
+
+        if (!pc) {
+
+          if (
+            !pendingCandidates.has(
+              viewerId
+            )
+          ) {
+
+            pendingCandidates.set(
+              viewerId,
+              []
+            );
+
+          }
+
+
+          pendingCandidates
+            .get(viewerId)
+            .push(
+              message.candidate
+            );
+
+
+          return;
+        }
+
+
+        /*
+          Wait until remote description.
+        */
+
+        if (
+          !pc.remoteDescription
+        ) {
+
+          if (
+            !pendingCandidates.has(
+              viewerId
+            )
+          ) {
+
+            pendingCandidates.set(
+              viewerId,
+              []
+            );
+
+          }
+
+
+          pendingCandidates
+            .get(viewerId)
+            .push(
+              message.candidate
+            );
+
+
+          return;
+        }
+
+
+        try {
+
+          await pc.addIceCandidate(
+            new RTCIceCandidate(
+              message.candidate
+            )
+          );
+
+        } catch (error) {
+
+          console.log(
+            "ICE error:",
+            error
+          );
+
+        }
+
+
+        return;
+      }
+
+    };
+
+
+  /* =======================================
+     CLOSE
+  ======================================= */
+
+  socket.onclose =
+    () => {
+
+      if (
+        ws === socket
+      ) {
+
+        ws = null;
+
+      }
+
+
+      roleReceived =
+        false;
+
+
+      closeAllPeers();
+
+
+      if (
+        !pageUnloading &&
+        !intentionallyClosed
+      ) {
+
+        status.textContent =
+          "Reconnecting...";
+
+
+        clearTimeout(
+          reconnectTimer
+        );
+
+
+        reconnectAttempt++;
+
+
+        const delay =
+          Math.min(
+            1000 *
+            Math.pow(
+              2,
+              reconnectAttempt - 1
+            ),
+            10000
+          );
+
+
+        reconnectTimer =
+          setTimeout(
+            connectWebSocket,
+            delay
+          );
+
+      }
+
+    };
+
+
+  /* =======================================
+     ERROR
+  ======================================= */
+
+  socket.onerror =
+    error => {
+
+      console.error(
+        "WebSocket error:",
+        error
+      );
+
+    };
+
+}
+
+
+/* =========================================
+   START
+========================================= */
+
+connectWebSocket();
+
+
+/* =========================================
+   PAGE CLOSE
+========================================= */
+
+window.addEventListener(
+  "beforeunload",
+  () => {
+
+    pageUnloading =
+      true;
+
+    intentionallyClosed =
+      true;
+
+
+    clearTimeout(
+      reconnectTimer
+    );
+
+
+    closeAllPeers();
+
+
+    if (stream) {
+
+      stream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+      stream = null;
+
+    }
+
+
+    if (ws) {
+
+      try {
+        ws.close();
+      } catch (error) {}
+
+    }
+
+  }
+);
