@@ -125,7 +125,8 @@ const statusText = document.getElementById("status");
 */
 const WS_URL =
   (location.protocol === "https:" ? "wss://" : "ws://") +
-  location.host;
+  location.host +
+  "/viewer";
 
 const ICE_SERVERS = [
   {
