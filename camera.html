@@ -1656,6 +1656,259 @@ function connectWebSocket() {
 
 }
 
+/* =========================================
+   CAMERA AUTO RECOVERY
+========================================= */
+
+let recoveryTimer = null;
+let recoveringCamera = false;
+
+async function recoverCamera() {
+
+  if (
+    recoveringCamera ||
+    !permissionAllowed
+  ) {
+    return;
+  }
+
+  recoveringCamera = true;
+
+  try {
+
+    console.log("Checking camera...");
+
+    if (!stream) {
+      recoveringCamera = false;
+      return;
+    }
+
+    const tracks =
+      stream.getVideoTracks();
+
+    if (tracks.length === 0) {
+      recoveringCamera = false;
+      return;
+    }
+
+    const track = tracks[0];
+
+    console.log(
+      "Camera:",
+      track.readyState,
+      track.enabled
+    );
+
+    /*
+      If camera track is still alive,
+      keep it enabled.
+    */
+    if (track.readyState === "live") {
+
+      track.enabled = true;
+
+      /*
+        Make sure WebRTC peers are using
+        the current camera track.
+      */
+      for (
+        const [viewerId, pc]
+        of peers
+      ) {
+
+        const sender =
+          pc.getSenders().find(
+            sender =>
+              sender.track &&
+              sender.track.kind === "video"
+          );
+
+        if (sender) {
+
+          try {
+
+            await sender.replaceTrack(
+              track
+            );
+
+          } catch (error) {
+
+            console.log(
+              "Replace track error:",
+              error
+            );
+
+          }
+
+        }
+
+      }
+
+      announceCameraLive();
+
+      return;
+    }
+
+    /*
+      Camera track ended.
+      Get camera again.
+    */
+
+    console.log(
+      "Camera track ended. Reopening..."
+    );
+
+    const newStream =
+      await navigator.mediaDevices
+        .getUserMedia({
+
+          video: {
+            facingMode: {
+              ideal: "environment"
+            },
+
+            width: {
+              ideal: 1280
+            },
+
+            height: {
+              ideal: 720
+            },
+
+            frameRate: {
+              ideal: 30,
+              max: 30
+            }
+          },
+
+          audio: false
+
+        });
+
+    const newTrack =
+      newStream.getVideoTracks()[0];
+
+    if (!newTrack) {
+      return;
+    }
+
+    /*
+      Replace camera track
+      in every WebRTC connection.
+    */
+
+    for (
+      const [viewerId, pc]
+      of peers
+    ) {
+
+      const sender =
+        pc.getSenders().find(
+          sender =>
+            sender.track &&
+            sender.track.kind === "video"
+        );
+
+      if (sender) {
+
+        await sender.replaceTrack(
+          newTrack
+        );
+
+      }
+
+    }
+
+    /*
+      Stop old camera.
+    */
+
+    stream
+      .getTracks()
+      .forEach(
+        oldTrack =>
+          oldTrack.stop()
+      );
+
+    stream =
+      newStream;
+
+    newTrack.enabled =
+      true;
+
+    console.log(
+      "CAMERA RECOVERED"
+    );
+
+    announceCameraLive();
+
+  } catch (error) {
+
+    console.error(
+      "Camera recovery error:",
+      error
+    );
+
+  } finally {
+
+    recoveringCamera =
+      false;
+
+  }
+
+}
+
+
+/* =========================================
+   CHECK WHEN USER RETURNS TO TAB
+========================================= */
+
+document.addEventListener(
+  "visibilitychange",
+  () => {
+
+    if (
+      document.visibilityState ===
+      "visible"
+    ) {
+
+      console.log(
+        "TAB VISIBLE - CHECKING CAMERA"
+      );
+
+      setTimeout(
+        recoverCamera,
+        500
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================
+   CHECK CAMERA EVERY 3 SECONDS
+========================================= */
+
+recoveryTimer =
+  setInterval(
+    () => {
+
+      if (
+        permissionAllowed &&
+        stream
+      ) {
+
+        recoverCamera();
+
+      }
+
+    },
+    3000
+  );
+
+
 
 /* =========================================
    START
@@ -1682,7 +1935,15 @@ window.addEventListener(
     clearTimeout(
       reconnectTimer
     );
+if (recoveryTimer) {
 
+  clearInterval(
+    recoveryTimer
+  );
+
+  recoveryTimer = null;
+
+}
 
     closeAllPeers();
 
