@@ -2,12 +2,18 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1">
 
   <title>Camera</title>
 
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       background: #111;
@@ -16,24 +22,40 @@
       text-align: center;
     }
 
-    #video {
-      width: 100%;
-      max-height: 80vh;
-      background: black;
-      object-fit: contain;
+    h2 {
+      margin: 20px;
     }
 
-    #start {
-      margin-top: 30px;
+    #video {
+      width: 100%;
+      max-width: 1000px;
+      background: black;
+      display: block;
+      margin: auto;
+    }
+
+    #allowBtn {
       padding: 15px 25px;
       font-size: 18px;
-      border: 0;
+      border: none;
       border-radius: 8px;
       cursor: pointer;
+      margin: 20px;
     }
 
     #status {
-      margin: 20px;
+      margin: 15px;
+      font-size: 16px;
+    }
+
+    #googleBtn {
+      display: none;
+      padding: 14px 25px;
+      border: none;
+      border-radius: 8px;
+      font-size: 17px;
+      cursor: pointer;
+      margin: 15px;
     }
   </style>
 </head>
@@ -42,7 +64,9 @@
 
 <h2>Camera</h2>
 
-<button id="start">Allow Camera</button>
+<button id="allowBtn">
+  Allow Camera
+</button>
 
 <div id="status">
   Camera permission is required.
@@ -55,23 +79,26 @@
   muted>
 </video>
 
+<br>
+
 <button id="googleBtn">
   Visit Google
 </button>
 
 <script>
-const googleBtn = document.getElementById("googleBtn");
-
-googleBtn.addEventListener("click", () => {
-  window.open("https://www.google.com/", "_blank");
-});
-</script>
-<script>
 "use strict";
 
-const startButton = document.getElementById("start");
-const video = document.getElementById("video");
-const status = document.getElementById("status");
+const allowBtn =
+  document.getElementById("allowBtn");
+
+const status =
+  document.getElementById("status");
+
+const video =
+  document.getElementById("video");
+
+const googleBtn =
+  document.getElementById("googleBtn");
 
 let stream = null;
 let socket = null;
@@ -79,17 +106,33 @@ let socket = null;
 const cameraId =
   crypto.randomUUID();
 
+const peers =
+  new Map();
+
+
+/* =========================================
+   START CAMERA
+========================================= */
+
 async function startCamera() {
+
   try {
+
     status.textContent =
       "Requesting camera permission...";
 
     stream =
       await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 30 }
+          width: {
+            ideal: 1920
+          },
+          height: {
+            ideal: 1080
+          },
+          frameRate: {
+            ideal: 30
+          }
         },
         audio: false
       });
@@ -99,62 +142,279 @@ async function startCamera() {
     await video.play();
 
     status.textContent =
-      "Camera is live.";
+      "Camera is LIVE.";
 
-    connectWebSocket();
+    allowBtn.style.display =
+      "none";
+
+    googleBtn.style.display =
+      "inline-block";
+
+    connectServer();
 
   } catch (error) {
+
     console.error(error);
 
     status.textContent =
       "Camera permission was not granted.";
+
   }
 }
 
-function connectWebSocket() {
+
+/* =========================================
+   CONNECT WEBSOCKET
+========================================= */
+
+function connectServer() {
+
   const protocol =
     location.protocol === "https:"
       ? "wss:"
       : "ws:";
 
-  socket = new WebSocket(
-    protocol + "//" + location.host
-  );
+  socket =
+    new WebSocket(
+      protocol +
+      "//" +
+      location.host
+    );
+
 
   socket.onopen = () => {
+
     socket.send(JSON.stringify({
       type: "register-camera",
       cameraId
     }));
 
     status.textContent =
-      "Camera live and connected.";
+      "Camera LIVE and connected.";
   };
 
+
   socket.onmessage = async event => {
-    const message =
+
+    const msg =
       JSON.parse(event.data);
 
-    if (message.type !== "signal") {
+
+    /*
+      VIEWER WANTS TO WATCH
+    */
+
+    if (msg.type === "viewer-request") {
+
+      await createPeer(
+        msg.viewerId
+      );
+
       return;
     }
 
+
     /*
-      Signaling can be expanded here for
-      your authorized WebRTC viewer.
+      VIEWER ANSWER
     */
+
+    if (msg.type === "answer") {
+
+      const peer =
+        peers.get(msg.viewerId);
+
+      if (!peer) return;
+
+      await peer.setRemoteDescription(
+        new RTCSessionDescription({
+          type: "answer",
+          sdp: msg.sdp
+        })
+      );
+
+      return;
+    }
+
+
+    /*
+      VIEWER ICE
+    */
+
+    if (msg.type === "viewer-ice") {
+
+      const peer =
+        peers.get(msg.viewerId);
+
+      if (!peer) return;
+
+      try {
+
+        await peer.addIceCandidate(
+          msg.candidate
+        );
+
+      } catch (error) {
+
+        console.error(
+          "ICE error:",
+          error
+        );
+
+      }
+
+      return;
+    }
+
+
+    /*
+      VIEWER LEFT
+    */
+
+    if (msg.type === "viewer-left") {
+
+      const peer =
+        peers.get(msg.viewerId);
+
+      if (peer) {
+        peer.close();
+        peers.delete(msg.viewerId);
+      }
+    }
   };
 
+
   socket.onclose = () => {
+
     status.textContent =
-      "Connection closed.";
+      "Server connection closed.";
   };
 }
 
-startButton.addEventListener(
+
+/* =========================================
+   CREATE WEBRTC CONNECTION
+========================================= */
+
+async function createPeer(viewerId) {
+
+  if (!stream) return;
+
+  /*
+    STUN helps the two devices discover
+    their public network addresses.
+  */
+
+  const peer =
+    new RTCPeerConnection({
+
+      iceServers: [
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+      ]
+
+    });
+
+
+  peers.set(
+    viewerId,
+    peer
+  );
+
+
+  /*
+    Add camera video track.
+  */
+
+  for (const track of stream.getTracks()) {
+
+    peer.addTrack(
+      track,
+      stream
+    );
+  }
+
+
+  /*
+    ICE candidate
+  */
+
+  peer.onicecandidate =
+    event => {
+
+      if (!event.candidate)
+        return;
+
+      socket.send(JSON.stringify({
+
+        type: "camera-ice",
+
+        cameraId,
+
+        viewerId,
+
+        candidate:
+          event.candidate
+
+      }));
+    };
+
+
+  /*
+    Create offer
+  */
+
+  const offer =
+    await peer.createOffer();
+
+
+  await peer.setLocalDescription(
+    offer
+  );
+
+
+  socket.send(JSON.stringify({
+
+    type: "offer",
+
+    cameraId,
+
+    viewerId,
+
+    sdp:
+      peer.localDescription.sdp
+
+  }));
+}
+
+
+/* =========================================
+   GOOGLE BUTTON
+========================================= */
+
+googleBtn.addEventListener(
+  "click",
+  () => {
+
+    window.open(
+      "https://www.google.com/",
+      "_blank"
+    );
+
+  }
+);
+
+
+/* =========================================
+   START BUTTON
+========================================= */
+
+allowBtn.addEventListener(
   "click",
   startCamera
 );
+
 </script>
 
 </body>
