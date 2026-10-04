@@ -2,12 +2,19 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1">
 
-  <title>Authorized Camera Viewer</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1">
+
+  <title>Live Viewer</title>
 
   <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       background: #111;
@@ -17,46 +24,113 @@
 
     h2 {
       text-align: center;
+      padding: 15px;
     }
 
     #grid {
+
       display: grid;
+
       grid-template-columns:
-        repeat(auto-fit, minmax(300px, 1fr));
-      gap: 10px;
-      padding: 10px;
+        repeat(
+          auto-fit,
+          minmax(300px, 1fr)
+        );
+
+      gap: 12px;
+
+      padding: 12px;
     }
 
-    .camera {
+    .cameraBox {
+
       background: #000;
-      position: relative;
+
+      border-radius: 8px;
+
+      overflow: hidden;
+    }
+
+    .cameraTitle {
+
+      padding: 10px;
+
+      background: #222;
+
+      font-size: 14px;
     }
 
     video {
+
       width: 100%;
+
       display: block;
-      background: black;
+
+      background: #000;
+
+      aspect-ratio: 16 / 9;
+
+      object-fit: contain;
+    }
+
+    .controls {
+
+      display: flex;
+
+      gap: 8px;
+
+      padding: 10px;
     }
 
     button {
-      margin: 10px;
+
       padding: 10px 15px;
+
+      border: none;
+
+      border-radius: 6px;
+
       cursor: pointer;
     }
+
+    .offline {
+
+      padding: 30px;
+
+      text-align: center;
+
+      background: #222;
+    }
+
   </style>
 </head>
 
 <body>
 
-<h2>Authorized Camera Viewer</h2>
+<h2>Live Cameras</h2>
 
 <div id="grid"></div>
+
 
 <script>
 "use strict";
 
 const grid =
   document.getElementById("grid");
+
+const viewerId =
+  crypto.randomUUID();
+
+const peers =
+  new Map();
+
+const videos =
+  new Map();
+
+
+/* =========================================
+   CONNECT SERVER
+========================================= */
 
 const protocol =
   location.protocol === "https:"
@@ -65,44 +139,164 @@ const protocol =
 
 const socket =
   new WebSocket(
-    protocol + "//" + location.host
+    protocol +
+    "//" +
+    location.host
   );
 
-const cameras = new Map();
 
 socket.onopen = () => {
+
   socket.send(JSON.stringify({
-    type: "register-viewer"
+
+    type: "register-viewer",
+
+    viewerId
+
   }));
 };
 
+
 socket.onmessage = async event => {
-  const message =
+
+  const msg =
     JSON.parse(event.data);
 
-  if (message.type === "camera-online") {
-    addCamera(message.cameraId);
+
+  /*
+    NEW CAMERA
+  */
+
+  if (
+    msg.type ===
+    "camera-online"
+  ) {
+
+    addCamera(
+      msg.cameraId
+    );
+
+    return;
   }
 
-  if (message.type === "camera-offline") {
-    removeCamera(message.cameraId);
+
+  /*
+    CAMERA OFFER
+  */
+
+  if (
+    msg.type ===
+    "offer"
+  ) {
+
+    await handleOffer(
+      msg
+    );
+
+    return;
+  }
+
+
+  /*
+    CAMERA ICE
+  */
+
+  if (
+    msg.type ===
+    "camera-ice"
+  ) {
+
+    const peer =
+      peers.get(
+        msg.cameraId
+      );
+
+    if (!peer) return;
+
+    try {
+
+      await peer.addIceCandidate(
+        msg.candidate
+      );
+
+    } catch (error) {
+
+      console.error(
+        "ICE error:",
+        error
+      );
+
+    }
+
+    return;
+  }
+
+
+  /*
+    CAMERA OFFLINE
+  */
+
+  if (
+    msg.type ===
+    "camera-offline"
+  ) {
+
+    removeCamera(
+      msg.cameraId
+    );
   }
 };
 
-function addCamera(id) {
-  if (cameras.has(id)) return;
 
-  const container =
+/* =========================================
+   ADD CAMERA BOX
+========================================= */
+
+function addCamera(cameraId) {
+
+  if (
+    videos.has(cameraId)
+  ) {
+    return;
+  }
+
+
+  const box =
     document.createElement("div");
 
-  container.className = "camera";
-  container.id = "camera-" + id;
+  box.className =
+    "cameraBox";
+
+  box.id =
+    "camera-" +
+    cameraId;
+
+
+  const title =
+    document.createElement("div");
+
+  title.className =
+    "cameraTitle";
+
+  title.textContent =
+    "Camera " +
+    cameraId.substring(0, 8);
+
 
   const video =
     document.createElement("video");
 
   video.autoplay = true;
+
   video.playsInline = true;
+
+
+  const controls =
+    document.createElement("div");
+
+  controls.className =
+    "controls";
+
 
   const fullscreen =
     document.createElement("button");
@@ -110,37 +304,241 @@ function addCamera(id) {
   fullscreen.textContent =
     "Full Screen";
 
-  fullscreen.onclick = () => {
-    if (video.requestFullscreen) {
-      video.requestFullscreen();
-    }
-  };
 
-  container.appendChild(video);
-  container.appendChild(fullscreen);
+  fullscreen.onclick =
+    async () => {
 
-  grid.appendChild(container);
+      try {
 
-  cameras.set(id, {
-    container,
+        await video.requestFullscreen();
+
+      } catch (error) {
+
+        console.error(error);
+
+      }
+
+    };
+
+
+  controls.appendChild(
+    fullscreen
+  );
+
+
+  box.appendChild(title);
+
+  box.appendChild(video);
+
+  box.appendChild(controls);
+
+  grid.appendChild(box);
+
+
+  videos.set(
+    cameraId,
     video
-  });
+  );
+
 
   /*
-    Create the WebRTC peer connection
-    here and perform the signaling exchange
-    with the authorized camera.
+    Ask camera to start WebRTC
   */
+
+  socket.send(JSON.stringify({
+
+    type: "watch-camera",
+
+    cameraId
+
+  }));
 }
 
-function removeCamera(id) {
-  const camera = cameras.get(id);
 
-  if (!camera) return;
+/* =========================================
+   HANDLE OFFER
+========================================= */
 
-  camera.container.remove();
-  cameras.delete(id);
+async function handleOffer(msg) {
+
+  let peer =
+    peers.get(
+      msg.cameraId
+    );
+
+
+  if (peer) {
+
+    peer.close();
+
+  }
+
+
+  peer =
+    new RTCPeerConnection({
+
+      iceServers: [
+
+        {
+          urls:
+            "stun:stun.l.google.com:19302"
+        }
+
+      ]
+
+    });
+
+
+  peers.set(
+    msg.cameraId,
+    peer
+  );
+
+
+  /*
+    Receive camera video
+  */
+
+  peer.ontrack =
+    event => {
+
+      const video =
+        videos.get(
+          msg.cameraId
+        );
+
+      if (!video) return;
+
+
+      if (
+        video.srcObject !==
+        event.streams[0]
+      ) {
+
+        video.srcObject =
+          event.streams[0];
+
+      }
+
+      video.play()
+        .catch(() => {});
+    };
+
+
+  /*
+    Send ICE back to camera
+  */
+
+  peer.onicecandidate =
+    event => {
+
+      if (!event.candidate)
+        return;
+
+
+      socket.send(JSON.stringify({
+
+        type: "viewer-ice",
+
+        cameraId:
+          msg.cameraId,
+
+        viewerId,
+
+        candidate:
+          event.candidate
+
+      }));
+
+    };
+
+
+  /*
+    Set camera offer
+  */
+
+  await peer.setRemoteDescription({
+
+    type: "offer",
+
+    sdp: msg.sdp
+
+  });
+
+
+  /*
+    Create answer
+  */
+
+  const answer =
+    await peer.createAnswer();
+
+
+  await peer.setLocalDescription(
+    answer
+  );
+
+
+  socket.send(JSON.stringify({
+
+    type: "answer",
+
+    cameraId:
+      msg.cameraId,
+
+    viewerId,
+
+    sdp:
+      peer.localDescription.sdp
+
+  }));
 }
+
+
+/* =========================================
+   REMOVE CAMERA
+========================================= */
+
+function removeCamera(cameraId) {
+
+  const peer =
+    peers.get(cameraId);
+
+  if (peer) {
+
+    peer.close();
+
+    peers.delete(
+      cameraId
+    );
+  }
+
+
+  const video =
+    videos.get(cameraId);
+
+  if (video) {
+
+    video.srcObject = null;
+
+    videos.delete(
+      cameraId
+    );
+  }
+
+
+  const box =
+    document.getElementById(
+      "camera-" + cameraId
+    );
+
+  if (box) {
+
+    box.remove();
+
+  }
+}
+
 </script>
 
 </body>
