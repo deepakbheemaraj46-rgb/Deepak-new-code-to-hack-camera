@@ -3,27 +3,34 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const WebSocket = require("ws");
 
 const PORT = process.env.PORT || 10000;
 
 const server = http.createServer((req, res) => {
-  let file = "camera.html";
+  let fileName;
 
-  if (req.url === "/viewer") {
-    file = "viewer.html";
+  if (req.url === "/") {
+    fileName = "camera.html";
+  } else if (req.url === "/viewer") {
+    fileName = "viewer.html";
+  } else {
+    res.writeHead(404);
+    return res.end("Not found");
   }
 
-  const filePath = path.join(__dirname, file);
+  const filePath = path.join(__dirname, fileName);
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      res.writeHead(404);
-      return res.end("File not found");
+      res.writeHead(500);
+      return res.end("File error");
     }
 
     res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store"
     });
 
     res.end(data);
@@ -32,98 +39,212 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
+/*
+  cameras:
+  cameraId -> {
+    ws,
+    peers: Map(viewerId -> RTCPeerConnection on camera side)
+  }
+*/
 const cameras = new Map();
-const viewers = new Set();
+
+/*
+  viewers:
+  viewerId -> websocket
+*/
+const viewers = new Map();
+
+function send(ws, message) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
+}
+
+function sendToViewer(viewerId, message) {
+  send(viewers.get(viewerId), message);
+}
+
+function sendToCamera(cameraId, message) {
+  const camera = cameras.get(cameraId);
+  if (camera) {
+    send(camera.ws, message);
+  }
+}
 
 wss.on("connection", ws => {
+  const connectionId = crypto.randomUUID();
+
   let role = null;
-  let cameraId = null;
+  let id = null;
 
   ws.on("message", raw => {
     let msg;
 
     try {
-      msg = JSON.parse(raw);
+      msg = JSON.parse(raw.toString());
     } catch {
       return;
     }
 
+    /*
+      CAMERA REGISTRATION
+    */
     if (msg.type === "register-camera") {
       role = "camera";
-      cameraId = msg.cameraId || crypto.randomUUID();
+      id = msg.cameraId || connectionId;
 
-      cameras.set(cameraId, ws);
-
-      // Tell viewers that a camera is available.
-      broadcastViewers({
-        type: "camera-online",
-        cameraId
+      cameras.set(id, {
+        ws,
+        peers: new Map()
       });
 
-      return;
-    }
-
-    if (msg.type === "register-viewer") {
-      role = "viewer";
-      viewers.add(ws);
-
-      // Send currently connected cameras.
-      for (const id of cameras.keys()) {
-        ws.send(JSON.stringify({
+      // Tell every currently connected viewer.
+      for (const viewerId of viewers.keys()) {
+        sendToViewer(viewerId, {
           type: "camera-online",
           cameraId: id
-        }));
+        });
       }
 
+      console.log("Camera connected:", id);
       return;
     }
 
-    if (msg.type === "signal") {
-      const target = cameras.get(msg.cameraId);
+    /*
+      VIEWER REGISTRATION
+    */
+    if (msg.type === "register-viewer") {
+      role = "viewer";
+      id = msg.viewerId || connectionId;
 
-      if (target && target.readyState === WebSocket.OPEN) {
-        target.send(JSON.stringify({
-          type: "signal",
-          from: "viewer",
-          data: msg.data
-        }));
+      viewers.set(id, ws);
+
+      // Send all currently online cameras.
+      for (const cameraId of cameras.keys()) {
+        send(ws, {
+          type: "camera-online",
+          cameraId
+        });
       }
 
+      console.log("Viewer connected:", id);
       return;
     }
 
-    if (msg.type === "camera-signal") {
-      broadcastViewers({
-        type: "camera-signal",
-        cameraId,
-        data: msg.data
+    /*
+      VIEWER WANTS A CAMERA
+    */
+    if (msg.type === "watch-camera") {
+      if (role !== "viewer") return;
+
+      const camera = cameras.get(msg.cameraId);
+
+      if (!camera) {
+        send(ws, {
+          type: "camera-error",
+          cameraId: msg.cameraId,
+          message: "Camera is offline"
+        });
+        return;
+      }
+
+      sendToCamera(msg.cameraId, {
+        type: "viewer-request",
+        cameraId: msg.cameraId,
+        viewerId: id
       });
+
+      return;
+    }
+
+    /*
+      CAMERA -> VIEWER
+      OFFER
+    */
+    if (msg.type === "offer") {
+      sendToViewer(msg.viewerId, {
+        type: "offer",
+        cameraId: msg.cameraId,
+        viewerId: msg.viewerId,
+        sdp: msg.sdp
+      });
+
+      return;
+    }
+
+    /*
+      VIEWER -> CAMERA
+      ANSWER
+    */
+    if (msg.type === "answer") {
+      sendToCamera(msg.cameraId, {
+        type: "answer",
+        viewerId: msg.viewerId,
+        sdp: msg.sdp
+      });
+
+      return;
+    }
+
+    /*
+      CAMERA -> VIEWER
+      ICE
+    */
+    if (msg.type === "camera-ice") {
+      sendToViewer(msg.viewerId, {
+        type: "camera-ice",
+        cameraId: msg.cameraId,
+        viewerId: msg.viewerId,
+        candidate: msg.candidate
+      });
+
+      return;
+    }
+
+    /*
+      VIEWER -> CAMERA
+      ICE
+    */
+    if (msg.type === "viewer-ice") {
+      sendToCamera(msg.cameraId, {
+        type: "viewer-ice",
+        viewerId: msg.viewerId,
+        candidate: msg.candidate
+      });
+
+      return;
     }
   });
 
   ws.on("close", () => {
-    viewers.delete(ws);
+    if (role === "camera" && id) {
+      cameras.delete(id);
 
-    if (role === "camera" && cameraId) {
-      cameras.delete(cameraId);
+      for (const viewerId of viewers.keys()) {
+        sendToViewer(viewerId, {
+          type: "camera-offline",
+          cameraId: id
+        });
+      }
 
-      broadcastViewers({
-        type: "camera-offline",
-        cameraId
-      });
+      console.log("Camera disconnected:", id);
+    }
+
+    if (role === "viewer" && id) {
+      viewers.delete(id);
+
+      // Tell cameras this viewer has gone.
+      for (const cameraId of cameras.keys()) {
+        sendToCamera(cameraId, {
+          type: "viewer-left",
+          viewerId: id
+        });
+      }
+
+      console.log("Viewer disconnected:", id);
     }
   });
 });
-
-function broadcastViewers(message) {
-  const data = JSON.stringify(message);
-
-  for (const viewer of viewers) {
-    if (viewer.readyState === WebSocket.OPEN) {
-      viewer.send(data);
-    }
-  }
-}
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
