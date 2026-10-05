@@ -54,24 +54,22 @@ video{
   object-fit:contain;
 }
 
+.status{
+  padding:10px;
+  text-align:center;
+  background:#222;
+}
+
 .controls{
-  display:flex;
-  gap:10px;
   padding:10px;
   background:#111;
 }
 
 button{
   padding:10px 15px;
-  border:none;
+  border:0;
   border-radius:6px;
   cursor:pointer;
-}
-
-.status{
-  padding:10px;
-  text-align:center;
-  background:#222;
 }
 
 </style>
@@ -90,25 +88,15 @@ button{
 "use strict";
 
 
-/* =================================
-   ELEMENTS
-================================= */
+/* =====================================
+   VARIABLES
+===================================== */
 
 const grid =
   document.getElementById("grid");
 
-
-/* =================================
-   VIEWER ID
-================================= */
-
 const viewerId =
   crypto.randomUUID();
-
-
-/* =================================
-   STORAGE
-================================= */
 
 const peers =
   new Map();
@@ -119,22 +107,54 @@ const videos =
 let socket = null;
 
 
-/* =================================
-   CONNECT
-================================= */
+/* =====================================
+   WEBRTC SERVERS
+===================================== */
+
+const rtcConfig = {
+
+  iceServers: [
+
+    {
+      urls:
+        "stun:stun.l.google.com:19302"
+    },
+
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp"
+      ],
+
+      username:
+        "openrelayproject",
+
+      credential:
+        "openrelayproject"
+    }
+
+  ]
+
+};
+
+
+/* =====================================
+   CONNECT SOCKET
+===================================== */
 
 function connect(){
 
   if(
     socket &&
     (
-      socket.readyState === WebSocket.OPEN ||
-      socket.readyState === WebSocket.CONNECTING
+      socket.readyState ===
+        WebSocket.OPEN ||
+      socket.readyState ===
+        WebSocket.CONNECTING
     )
   ){
-
     return;
-
   }
 
 
@@ -152,14 +172,10 @@ function connect(){
     );
 
 
-  /* ===============================
-     SOCKET OPEN
-  =============================== */
-
   socket.onopen = () => {
 
     console.log(
-      "Viewer connected"
+      "Viewer WebSocket connected"
     );
 
 
@@ -178,17 +194,21 @@ function connect(){
   };
 
 
-  /* ===============================
-     SOCKET MESSAGE
-  =============================== */
-
   socket.onmessage =
     async event => {
 
       try{
 
         const msg =
-          JSON.parse(event.data);
+          JSON.parse(
+            event.data
+          );
+
+
+        console.log(
+          "Received:",
+          msg.type
+        );
 
 
         /* CAMERA ONLINE */
@@ -206,22 +226,7 @@ function connect(){
         }
 
 
-        /* CAMERA OFFLINE */
-
-        if(
-          msg.type ===
-          "camera-offline"
-        ){
-
-          removeCamera(
-            msg.cameraId
-          );
-
-          return;
-        }
-
-
-        /* WEBRTC OFFER */
+        /* OFFER */
 
         if(
           msg.type ===
@@ -243,41 +248,33 @@ function connect(){
           "camera-ice"
         ){
 
-          const peer =
-            peers.get(
-              msg.cameraId
-            );
+          await handleCameraIce(
+            msg
+          );
 
-
-          if(!peer){
-            return;
-          }
-
-
-          try{
-
-            await peer.addIceCandidate(
-              new RTCIceCandidate(
-                msg.candidate
-              )
-            );
-
-          }catch(err){
-
-            console.error(
-              "ICE error:",
-              err
-            );
-
-          }
-
+          return;
         }
 
-      }catch(err){
+
+        /* CAMERA OFFLINE */
+
+        if(
+          msg.type ===
+          "camera-offline"
+        ){
+
+          removeCamera(
+            msg.cameraId
+          );
+
+          return;
+        }
+
+      }catch(error){
 
         console.error(
           "Message error:",
-          err
+          error
         );
 
       }
@@ -285,49 +282,35 @@ function connect(){
     };
 
 
-  /* ===============================
-     SOCKET CLOSED
-  =============================== */
-
   socket.onclose = () => {
 
     console.log(
-      "Viewer socket closed"
+      "WebSocket disconnected"
     );
 
-
     setTimeout(
-      () => {
-
-        connect();
-
-      },
+      connect,
       2000
     );
 
   };
 
 
-  /* ===============================
-     SOCKET ERROR
-  =============================== */
+  socket.onerror = error => {
 
-  socket.onerror =
-    error => {
+    console.error(
+      "WebSocket error:",
+      error
+    );
 
-      console.error(
-        "WebSocket error:",
-        error
-      );
-
-    };
+  };
 
 }
 
 
-/* =================================
+/* =====================================
    ADD CAMERA
-================================= */
+===================================== */
 
 function addCamera(
   cameraId
@@ -338,13 +321,9 @@ function addCamera(
       cameraId
     )
   ){
-
     return;
-
   }
 
-
-  /* CAMERA BOX */
 
   const box =
     document.createElement(
@@ -358,8 +337,6 @@ function addCamera(
     "camera-" +
     cameraId;
 
-
-  /* TITLE */
 
   const title =
     document.createElement(
@@ -377,8 +354,6 @@ function addCamera(
     );
 
 
-  /* VIDEO */
-
   const video =
     document.createElement(
       "video"
@@ -394,8 +369,6 @@ function addCamera(
     true;
 
 
-  /* STATUS */
-
   const status =
     document.createElement(
       "div"
@@ -408,8 +381,6 @@ function addCamera(
     "Connecting camera...";
 
 
-  /* CONTROLS */
-
   const controls =
     document.createElement(
       "div"
@@ -419,35 +390,26 @@ function addCamera(
     "controls";
 
 
-  /* FULLSCREEN BUTTON */
-
-  const fullBtn =
+  const fullscreen =
     document.createElement(
       "button"
     );
 
-  fullBtn.textContent =
+  fullscreen.textContent =
     "Fullscreen";
 
 
-  fullBtn.onclick =
+  fullscreen.onclick =
     async () => {
 
       try{
 
-        if(
-          video.requestFullscreen
-        ){
+        await video.requestFullscreen();
 
-          await video.requestFullscreen();
-
-        }
-
-      }catch(err){
+      }catch(error){
 
         console.error(
-          "Fullscreen error:",
-          err
+          error
         );
 
       }
@@ -456,11 +418,9 @@ function addCamera(
 
 
   controls.appendChild(
-    fullBtn
+    fullscreen
   );
 
-
-  /* BUILD BOX */
 
   box.appendChild(
     title
@@ -484,74 +444,56 @@ function addCamera(
   );
 
 
-  /* SAVE VIDEO */
-
   videos.set(
     cameraId,
-    video
+    {
+      video,
+      status
+    }
   );
-
-
-  /*
-    Save status element
-    on video for later use.
-  */
-
-  video._status =
-    status;
 
 
   /* REQUEST CAMERA */
 
-  if(
-    socket &&
-    socket.readyState ===
-    WebSocket.OPEN
-  ){
+  socket.send(
+    JSON.stringify({
 
-    socket.send(
-      JSON.stringify({
+      type:
+        "watch-camera",
 
-        type:
-          "watch-camera",
+      cameraId:
+        cameraId
 
-        cameraId:
-          cameraId
-
-      })
-    );
-
-  }
+    })
+  );
 
 }
 
 
-/* =================================
-   HANDLE WEBRTC OFFER
-================================= */
+/* =====================================
+   HANDLE OFFER
+===================================== */
 
 async function handleOffer(
   msg
 ){
 
   console.log(
-    "Offer received:",
+    "Handling offer:",
     msg.cameraId
   );
 
 
-  /* GET VIDEO */
-
-  const video =
+  const camera =
     videos.get(
       msg.cameraId
     );
 
 
-  if(!video){
+  if(!camera){
 
-    console.log(
-      "Video element not found"
+    console.error(
+      "Camera video not found"
     );
 
     return;
@@ -559,20 +501,25 @@ async function handleOffer(
   }
 
 
+  const video =
+    camera.video;
+
+  const status =
+    camera.status;
+
+
   /* CLOSE OLD PEER */
 
-  let peer =
+  const oldPeer =
     peers.get(
       msg.cameraId
     );
 
 
-  if(peer){
+  if(oldPeer){
 
     try{
-
-      peer.close();
-
+      oldPeer.close();
     }catch{}
 
   }
@@ -580,38 +527,10 @@ async function handleOffer(
 
   /* CREATE PEER */
 
-  peer =
-    new RTCPeerConnection({
-
-      iceServers:[
-
-        {
-          urls:
-            "stun:stun.l.google.com:19302"
-        },
-
-        {
-          urls:[
-
-            "turn:openrelay.metered.ca:80",
-
-            "turn:openrelay.metered.ca:443",
-
-            "turn:openrelay.metered.ca:443?transport=tcp"
-
-          ],
-
-          username:
-            "openrelayproject",
-
-          credential:
-            "openrelayproject"
-
-        }
-
-      ]
-
-    });
+  const peer =
+    new RTCPeerConnection(
+      rtcConfig
+    );
 
 
   peers.set(
@@ -621,92 +540,77 @@ async function handleOffer(
 
 
   /* =================================
-     RECEIVE CAMERA TRACK
+     IMPORTANT: RECEIVE TRACK
   ================================= */
 
   peer.ontrack =
-    async event => {
+    event => {
 
       console.log(
-        "Camera track received"
+        "TRACK RECEIVED",
+        event.track.kind
       );
+
+
+      let stream;
 
 
       if(
         event.streams &&
-        event.streams.length > 0
+        event.streams.length
       ){
 
-        video.srcObject =
+        stream =
           event.streams[0];
 
       }else{
 
-        /*
-          Fallback if browser does not
-          provide event.streams.
-        */
+        stream =
+          new MediaStream();
 
-        if(
-          !video.srcObject
-        ){
+        stream.addTrack(
+          event.track
+        );
 
-          const mediaStream =
-            new MediaStream();
+      }
 
-          mediaStream.addTrack(
-            event.track
+
+      video.srcObject =
+        stream;
+
+
+      status.textContent =
+        "Camera stream received";
+
+
+      video.play()
+        .then(() => {
+
+          console.log(
+            "VIDEO PLAYING"
           );
 
-          video.srcObject =
-            mediaStream;
+          status.textContent =
+            "LIVE";
 
-        }
+        })
+        .catch(error => {
 
-      }
+          console.error(
+            "Video play failed:",
+            error
+          );
 
+          status.textContent =
+            "Video play blocked";
 
-      if(
-        video._status
-      ){
-
-        video._status.textContent =
-          "Live";
-
-      }
-
-
-      try{
-
-        await video.play();
-
-        console.log(
-          "Video playing"
-        );
-
-      }catch(err){
-
-        console.error(
-          "Video play error:",
-          err
-        );
-
-        if(
-          video._status
-        ){
-
-          video._status.textContent =
-            "Tap the video to start";
-
-        }
-
-      }
+        });
 
     };
 
 
   /* =================================
-     ICE CANDIDATE
+     ICE
   ================================= */
 
   peer.onicecandidate =
@@ -715,40 +619,35 @@ async function handleOffer(
       if(
         !event.candidate
       ){
-
         return;
-
       }
 
 
       if(
-        !socket ||
-        socket.readyState !==
-        WebSocket.OPEN
+        socket &&
+        socket.readyState ===
+          WebSocket.OPEN
       ){
 
-        return;
+        socket.send(
+          JSON.stringify({
+
+            type:
+              "viewer-ice",
+
+            cameraId:
+              msg.cameraId,
+
+            viewerId:
+              viewerId,
+
+            candidate:
+              event.candidate
+
+          })
+        );
 
       }
-
-
-      socket.send(
-        JSON.stringify({
-
-          type:
-            "viewer-ice",
-
-          cameraId:
-            msg.cameraId,
-
-          viewerId:
-            viewerId,
-
-          candidate:
-            event.candidate
-
-        })
-      );
 
     };
 
@@ -761,57 +660,51 @@ async function handleOffer(
     () => {
 
       console.log(
-        "Connection:",
+        "Connection state:",
         peer.connectionState
       );
 
 
       if(
-        video._status
+        peer.connectionState ===
+        "connecting"
       ){
 
-        if(
-          peer.connectionState ===
-          "connected"
-        ){
+        status.textContent =
+          "Connecting camera...";
 
-          video._status.textContent =
-            "Live";
-
-        }
+      }
 
 
-        if(
-          peer.connectionState ===
-          "connecting"
-        ){
+      if(
+        peer.connectionState ===
+        "connected"
+      ){
 
-          video._status.textContent =
-            "Connecting...";
+        status.textContent =
+          "Connected - waiting for video...";
 
-        }
-
-
-        if(
-          peer.connectionState ===
-          "failed"
-        ){
-
-          video._status.textContent =
-            "Connection failed";
-
-        }
+      }
 
 
-        if(
-          peer.connectionState ===
-          "disconnected"
-        ){
+      if(
+        peer.connectionState ===
+        "failed"
+      ){
 
-          video._status.textContent =
-            "Disconnected";
+        status.textContent =
+          "WebRTC connection failed";
 
-        }
+      }
+
+
+      if(
+        peer.connectionState ===
+        "disconnected"
+      ){
+
+        status.textContent =
+          "Camera disconnected";
 
       }
 
@@ -819,7 +712,22 @@ async function handleOffer(
 
 
   /* =================================
-     REMOTE DESCRIPTION
+     ICE CONNECTION STATE
+  ================================= */
+
+  peer.oniceconnectionstatechange =
+    () => {
+
+      console.log(
+        "ICE state:",
+        peer.iceConnectionState
+      );
+
+    };
+
+
+  /* =================================
+     REMOTE OFFER
   ================================= */
 
   await peer.setRemoteDescription({
@@ -834,7 +742,7 @@ async function handleOffer(
 
 
   /* =================================
-     CREATE ANSWER
+     ANSWER
   ================================= */
 
   const answer =
@@ -846,32 +754,75 @@ async function handleOffer(
   );
 
 
-  /* =================================
-     SEND ANSWER
-  ================================= */
+  socket.send(
+    JSON.stringify({
 
-  if(
-    socket &&
-    socket.readyState ===
-    WebSocket.OPEN
-  ){
+      type:
+        "answer",
 
-    socket.send(
-      JSON.stringify({
+      cameraId:
+        msg.cameraId,
 
-        type:
-          "answer",
+      viewerId:
+        viewerId,
 
-        cameraId:
-          msg.cameraId,
+      sdp:
+        peer.localDescription.sdp
 
-        viewerId:
-          viewerId,
+    })
+  );
 
-        sdp:
-          peer.localDescription.sdp
 
-      })
+  console.log(
+    "Answer sent"
+  );
+
+}
+
+
+/* =====================================
+   CAMERA ICE
+===================================== */
+
+async function handleCameraIce(
+  msg
+){
+
+  const peer =
+    peers.get(
+      msg.cameraId
+    );
+
+
+  if(!peer){
+
+    console.log(
+      "Peer not ready for ICE"
+    );
+
+    return;
+
+  }
+
+
+  try{
+
+    await peer.addIceCandidate(
+      new RTCIceCandidate(
+        msg.candidate
+      )
+    );
+
+
+    console.log(
+      "Camera ICE added"
+    );
+
+  }catch(error){
+
+    console.error(
+      "ICE candidate error:",
+      error
     );
 
   }
@@ -879,9 +830,9 @@ async function handleOffer(
 }
 
 
-/* =================================
+/* =====================================
    REMOVE CAMERA
-================================= */
+===================================== */
 
 function removeCamera(
   cameraId
@@ -896,9 +847,7 @@ function removeCamera(
   if(peer){
 
     try{
-
       peer.close();
-
     }catch{}
 
     peers.delete(
@@ -929,18 +878,13 @@ function removeCamera(
 }
 
 
-/* =================================
-   INTERNET RETURNS
-================================= */
+/* =====================================
+   INTERNET
+===================================== */
 
 window.addEventListener(
   "online",
   () => {
-
-    console.log(
-      "Internet available"
-    );
-
 
     connect();
 
@@ -948,9 +892,9 @@ window.addEventListener(
 );
 
 
-/* =================================
+/* =====================================
    START
-================================= */
+===================================== */
 
 connect();
 
@@ -958,3 +902,4 @@ connect();
 
 </body>
 </html>
+
