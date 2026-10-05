@@ -2,32 +2,77 @@
 <html>
 <head>
 <meta charset="UTF-8">
+<meta name="viewport"
+content="width=device-width,initial-scale=1">
+
 <title>Live Cameras</title>
+
 <style>
+
+*{
+box-sizing:border-box;
+}
+
 body{
-  margin:0;
-  background:#111;
-  color:white;
-  font-family:Arial,sans-serif;
+margin:0;
+background:#111;
+color:#fff;
+font-family:Arial,sans-serif;
 }
 
 h2{
-  text-align:center;
+text-align:center;
+padding:15px;
 }
 
 #grid{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
-  gap:12px;
-  padding:12px;
+display:grid;
+grid-template-columns:
+repeat(auto-fit,minmax(320px,1fr));
+gap:12px;
+padding:12px;
+}
+
+.cameraBox{
+background:#000;
+border-radius:10px;
+overflow:hidden;
+}
+
+.cameraTitle{
+padding:10px;
+background:#222;
 }
 
 video{
-  width:100%;
-  background:black;
-  border-radius:8px;
+width:100%;
+aspect-ratio:16/9;
+background:#000;
+display:block;
+object-fit:contain;
 }
+
+.controls{
+display:flex;
+gap:10px;
+padding:10px;
+}
+
+button{
+padding:10px 15px;
+border:none;
+border-radius:6px;
+cursor:pointer;
+}
+
+.offline{
+padding:30px;
+text-align:center;
+background:#222;
+}
+
 </style>
+
 </head>
 
 <body>
@@ -38,190 +83,482 @@ video{
 
 <script>
 
-const viewerId = crypto.randomUUID();
-
-const peers = new Map();
-const videos = new Map();
-
-const ws = new WebSocket(
-  (location.protocol === "https:"
-    ? "wss:"
-    : "ws:")
-  + "//"
-  + location.host
+const grid =
+document.getElementById(
+"grid"
 );
 
-ws.onopen = () => {
+const viewerId =
+crypto.randomUUID();
 
-  console.log("Viewer connected");
+const peers =
+new Map();
 
-  ws.send(JSON.stringify({
-    type: "register-viewer",
-    viewerId
-  }));
+const videos =
+new Map();
 
-};
+let socket;
 
-ws.onmessage = async e => {
+connect();
 
-  console.log("MESSAGE:", e.data);
+function connect(){
 
-  const m = JSON.parse(e.data);
+const protocol =
+location.protocol ===
+"https:"
+? "wss:"
+: "ws:";
 
-  if (m.type === "camera-online") {
+socket =
+new WebSocket(
+protocol +
+"//" +
+location.host
+);
 
-    if (videos.has(m.cameraId))
-      return;
+socket.onopen = () => {
 
-    const video =
-      document.createElement("video");
+console.log(
+"Viewer connected"
+);
 
-    video.autoplay = true;
-    video.playsInline = true;
+socket.send(
+JSON.stringify({
 
-    document
-      .getElementById("grid")
-      .appendChild(video);
+type:
+"register-viewer",
 
-    videos.set(
-      m.cameraId,
-      video
-    );
+viewerId
 
-    ws.send(JSON.stringify({
-      type: "watch-camera",
-      cameraId: m.cameraId
-    }));
-  }
-
-  if (m.type === "offer") {
-
-    const peer =
-      new RTCPeerConnection({
-
-        iceServers: [
-
-          {
-            urls:
-              "stun:stun.l.google.com:19302"
-          },
-
-          {
-            urls: [
-              "turn:openrelay.metered.ca:80",
-              "turn:openrelay.metered.ca:443"
-            ],
-            username:
-              "openrelayproject",
-            credential:
-              "openrelayproject"
-          }
-
-        ]
-
-      });
-
-    peers.set(
-      m.cameraId,
-      peer
-    );
-
-    peer.ontrack = event => {
-
-      const video =
-        videos.get(m.cameraId);
-
-      if (video) {
-
-        video.srcObject =
-          event.streams[0];
-
-      }
-
-    };
-
-    peer.onicecandidate =
-      event => {
-
-        if (!event.candidate)
-          return;
-
-        ws.send(JSON.stringify({
-
-          type: "viewer-ice",
-
-          cameraId:
-            m.cameraId,
-
-          viewerId,
-
-          candidate:
-            event.candidate
-
-        }));
-
-      };
-
-    await peer.setRemoteDescription({
-      type: "offer",
-      sdp: m.sdp
-    });
-
-    const answer =
-      await peer.createAnswer();
-
-    await peer.setLocalDescription(
-      answer
-    );
-
-    ws.send(JSON.stringify({
-
-      type: "answer",
-
-      cameraId:
-        m.cameraId,
-
-      viewerId,
-
-      sdp:
-        peer.localDescription.sdp
-
-    }));
-
-  }
-
-  if (m.type === "camera-ice") {
-
-    const peer =
-      peers.get(m.cameraId);
-
-    if (!peer) return;
-
-    try {
-
-      await peer.addIceCandidate(
-        new RTCIceCandidate(
-          m.candidate
-        )
-      );
-
-    } catch(err) {
-
-      console.error(err);
-
-    }
-  }
+})
+);
 
 };
 
-ws.onerror = err => {
+socket.onmessage =
+async event => {
 
-  console.error(
-    "WebSocket error",
-    err
-  );
+const msg =
+JSON.parse(
+event.data
+);
+
+if(
+msg.type ===
+"camera-online"
+){
+
+addCamera(
+msg.cameraId
+);
+
+return;
+}
+
+if(
+msg.type ===
+"camera-offline"
+){
+
+removeCamera(
+msg.cameraId
+);
+
+return;
+}
+
+if(
+msg.type ===
+"offer"
+){
+
+await handleOffer(
+msg
+);
+
+return;
+}
+
+if(
+msg.type ===
+"camera-ice"
+){
+
+const peer =
+peers.get(
+msg.cameraId
+);
+
+if(!peer)
+return;
+
+try{
+
+await peer.addIceCandidate(
+new RTCIceCandidate(
+msg.candidate
+)
+);
+
+}catch(err){
+
+console.error(err);
+
+}
+
+}
 
 };
+
+socket.onclose =
+() => {
+
+console.log(
+"Socket closed"
+);
+
+setTimeout(
+() => {
+
+location.reload();
+
+},
+2000
+);
+
+};
+
+}
+
+function addCamera(
+cameraId
+){
+
+if(
+videos.has(
+cameraId
+)
+){
+return;
+}
+
+const box =
+document.createElement(
+"div"
+);
+
+box.className =
+"cameraBox";
+
+box.id =
+"camera-" +
+cameraId;
+
+const title =
+document.createElement(
+"div"
+);
+
+title.className =
+"cameraTitle";
+
+title.textContent =
+"Camera " +
+cameraId.substring(
+0,
+8
+);
+
+const video =
+document.createElement(
+"video"
+);
+
+video.autoplay =
+true;
+
+video.playsInline =
+true;
+
+const controls =
+document.createElement(
+"div"
+);
+
+controls.className =
+"controls";
+
+const fullBtn =
+document.createElement(
+"button"
+);
+
+fullBtn.textContent =
+"Fullscreen";
+
+fullBtn.onclick =
+async () => {
+
+try{
+
+await video
+.requestFullscreen();
+
+}catch(err){
+
+console.error(err);
+
+}
+
+};
+
+controls.appendChild(
+fullBtn
+);
+
+box.appendChild(
+title
+);
+
+box.appendChild(
+video
+);
+
+box.appendChild(
+controls
+);
+
+grid.appendChild(
+box
+);
+
+videos.set(
+cameraId,
+video
+);
+
+socket.send(
+JSON.stringify({
+
+type:
+"watch-camera",
+
+cameraId
+
+})
+);
+
+}
+
+async function
+handleOffer(msg){
+
+let peer =
+peers.get(
+msg.cameraId
+);
+
+if(peer){
+
+peer.close();
+
+}
+
+peer =
+new RTCPeerConnection({
+
+iceServers:[
+
+{
+urls:
+"stun:stun.l.google.com:19302"
+},
+
+{
+urls:[
+
+"turn:openrelay.metered.ca:80",
+
+"turn:openrelay.metered.ca:443",
+
+"turn:openrelay.metered.ca:443?transport=tcp"
+
+],
+
+username:
+"openrelayproject",
+
+credential:
+"openrelayproject"
+
+}
+
+]
+
+});
+
+peers.set(
+msg.cameraId,
+peer
+);
+
+peer.ontrack =
+event => {
+
+const video =
+videos.get(
+msg.cameraId
+);
+
+if(
+video
+){
+
+video.srcObject =
+event.streams[0];
+
+}
+
+};
+
+peer.onicecandidate =
+event => {
+
+if(
+!event.candidate
+){
+return;
+}
+
+socket.send(
+JSON.stringify({
+
+type:
+"viewer-ice",
+
+cameraId:
+msg.cameraId,
+
+viewerId,
+
+candidate:
+event.candidate
+
+})
+);
+
+};
+
+peer.onconnectionstatechange =
+() => {
+
+console.log(
+
+"Connection:",
+
+peer.connectionState
+
+);
+
+};
+
+await peer.setRemoteDescription({
+
+type:"offer",
+
+sdp:msg.sdp
+
+});
+
+const answer =
+await peer.createAnswer();
+
+await peer.setLocalDescription(
+answer
+);
+
+socket.send(
+JSON.stringify({
+
+type:
+"answer",
+
+cameraId:
+msg.cameraId,
+
+viewerId,
+
+sdp:
+peer.localDescription
+.sdp
+
+})
+);
+
+}
+
+function removeCamera(
+cameraId
+){
+
+const peer =
+peers.get(
+cameraId
+);
+
+if(peer){
+
+peer.close();
+
+peers.delete(
+cameraId
+);
+
+}
+
+const box =
+document.getElementById(
+"camera-" +
+cameraId
+);
+
+if(box){
+
+box.remove();
+
+}
+
+videos.delete(
+cameraId
+);
+
+}
+
+document.addEventListener(
+"visibilitychange",
+() => {
+
+if(
+document
+.visibilityState ===
+"visible"
+){
+
+location.reload();
+
+}
+
+}
+);
+
+window.addEventListener(
+"online",
+() => {
+
+location.reload();
+
+}
+);
 
 </script>
 
