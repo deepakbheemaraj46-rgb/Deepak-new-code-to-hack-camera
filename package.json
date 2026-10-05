@@ -1,1 +1,8 @@
-{"name":"webrtc","dependencies":{"ws":"^8.18.0"}}
+{
+  "name": "camera-stream",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
