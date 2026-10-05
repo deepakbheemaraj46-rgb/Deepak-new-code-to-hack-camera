@@ -61,6 +61,8 @@ video{
 }
 
 .controls{
+  display:flex;
+  gap:10px;
   padding:10px;
   background:#111;
 }
@@ -70,6 +72,7 @@ button{
   border:0;
   border-radius:6px;
   cursor:pointer;
+  font-size:15px;
 }
 
 </style>
@@ -148,14 +151,17 @@ function connect(){
   if(
     socket &&
     (
-      socket.readyState ===
-        WebSocket.OPEN ||
-      socket.readyState ===
-        WebSocket.CONNECTING
+      socket.readyState === WebSocket.OPEN ||
+      socket.readyState === WebSocket.CONNECTING
     )
   ){
     return;
   }
+
+
+  console.log(
+    "Connecting viewer WebSocket..."
+  );
 
 
   const protocol =
@@ -171,6 +177,10 @@ function connect(){
       location.host
     );
 
+
+  /* ===================================
+     SOCKET OPEN
+  =================================== */
 
   socket.onopen = () => {
 
@@ -193,6 +203,10 @@ function connect(){
 
   };
 
+
+  /* ===================================
+     SOCKET MESSAGE
+  =================================== */
 
   socket.onmessage =
     async event => {
@@ -282,11 +296,19 @@ function connect(){
     };
 
 
+  /* ===================================
+     SOCKET CLOSED
+  =================================== */
+
   socket.onclose = () => {
 
     console.log(
       "WebSocket disconnected"
     );
+
+
+    socket = null;
+
 
     setTimeout(
       connect,
@@ -295,6 +317,10 @@ function connect(){
 
   };
 
+
+  /* ===================================
+     SOCKET ERROR
+  =================================== */
 
   socket.onerror = error => {
 
@@ -321,7 +347,9 @@ function addCamera(
       cameraId
     )
   ){
+
     return;
+
   }
 
 
@@ -337,6 +365,10 @@ function addCamera(
     "camera-" +
     cameraId;
 
+
+  /* ===================================
+     TITLE
+  =================================== */
 
   const title =
     document.createElement(
@@ -354,6 +386,10 @@ function addCamera(
     );
 
 
+  /* ===================================
+     VIDEO
+  =================================== */
+
   const video =
     document.createElement(
       "video"
@@ -365,9 +401,19 @@ function addCamera(
   video.playsInline =
     true;
 
-  video.muted =
-    true;
+  /*
+    IMPORTANT:
+    Do NOT set muted=true.
+    We want microphone audio.
+  */
 
+  video.muted =
+    false;
+
+
+  /* ===================================
+     STATUS
+  =================================== */
 
   const status =
     document.createElement(
@@ -381,6 +427,10 @@ function addCamera(
     "Connecting camera...";
 
 
+  /* ===================================
+     CONTROLS
+  =================================== */
+
   const controls =
     document.createElement(
       "div"
@@ -389,6 +439,8 @@ function addCamera(
   controls.className =
     "controls";
 
+
+  /* FULLSCREEN BUTTON */
 
   const fullscreen =
     document.createElement(
@@ -404,13 +456,53 @@ function addCamera(
 
       try{
 
-        await video.requestFullscreen();
+        if(
+          video.requestFullscreen
+        ){
+
+          await video.requestFullscreen();
+
+        }
 
       }catch(error){
 
         console.error(
+          "Fullscreen error:",
           error
         );
+
+      }
+
+    };
+
+
+  /* AUDIO BUTTON */
+
+  const audioButton =
+    document.createElement(
+      "button"
+    );
+
+  audioButton.textContent =
+    "🔊 Mute";
+
+
+  audioButton.onclick =
+    () => {
+
+      video.muted =
+        !video.muted;
+
+
+      if(video.muted){
+
+        audioButton.textContent =
+          "🔇 Unmute";
+
+      }else{
+
+        audioButton.textContent =
+          "🔊 Mute";
 
       }
 
@@ -421,6 +513,14 @@ function addCamera(
     fullscreen
   );
 
+  controls.appendChild(
+    audioButton
+  );
+
+
+  /* ===================================
+     BUILD CAMERA BOX
+  =================================== */
 
   box.appendChild(
     title
@@ -447,25 +547,35 @@ function addCamera(
   videos.set(
     cameraId,
     {
-      video,
-      status
+      video: video,
+      status: status
     }
   );
 
 
-  /* REQUEST CAMERA */
+  /* ===================================
+     REQUEST CAMERA
+  =================================== */
 
-  socket.send(
-    JSON.stringify({
+  if(
+    socket &&
+    socket.readyState ===
+      WebSocket.OPEN
+  ){
 
-      type:
-        "watch-camera",
+    socket.send(
+      JSON.stringify({
 
-      cameraId:
-        cameraId
+        type:
+          "watch-camera",
 
-    })
-  );
+        cameraId:
+          cameraId
+
+      })
+    );
+
+  }
 
 }
 
@@ -493,7 +603,8 @@ async function handleOffer(
   if(!camera){
 
     console.error(
-      "Camera video not found"
+      "Camera video not found:",
+      msg.cameraId
     );
 
     return;
@@ -508,7 +619,9 @@ async function handleOffer(
     camera.status;
 
 
-  /* CLOSE OLD PEER */
+  /* ===================================
+     CLOSE OLD PEER
+  =================================== */
 
   const oldPeer =
     peers.get(
@@ -519,13 +632,23 @@ async function handleOffer(
   if(oldPeer){
 
     try{
+
       oldPeer.close();
-    }catch{}
+
+    }catch(error){
+
+      console.error(
+        error
+      );
+
+    }
 
   }
 
 
-  /* CREATE PEER */
+  /* ===================================
+     CREATE PEER
+  =================================== */
 
   const peer =
     new RTCPeerConnection(
@@ -539,55 +662,94 @@ async function handleOffer(
   );
 
 
-  /* =================================
-     IMPORTANT: RECEIVE TRACK
-  ================================= */
+  /* ===================================
+     REMOTE TRACK
+  =================================== */
 
   peer.ontrack =
     event => {
 
       console.log(
-        "TRACK RECEIVED",
+        "TRACK RECEIVED:",
         event.track.kind
       );
 
 
-      let stream;
-
+      /*
+        Use the stream supplied by
+        WebRTC when available.
+      */
 
       if(
         event.streams &&
-        event.streams.length
+        event.streams.length > 0
       ){
 
-        stream =
+        video.srcObject =
           event.streams[0];
 
       }else{
 
-        stream =
-          new MediaStream();
+        /*
+          Fallback for browsers where
+          event.streams is empty.
+        */
 
-        stream.addTrack(
+        if(
+          !video.srcObject
+        ){
+
+          video.srcObject =
+            new MediaStream();
+
+        }
+
+
+        video.srcObject.addTrack(
           event.track
         );
 
       }
 
 
-      video.srcObject =
-        stream;
+      /*
+        We need BOTH:
+        video track
+        audio track
+      */
+
+      if(
+        event.track.kind ===
+        "video"
+      ){
+
+        status.textContent =
+          "Video received";
+
+      }
 
 
-      status.textContent =
-        "Camera stream received";
+      if(
+        event.track.kind ===
+        "audio"
+      ){
 
+        console.log(
+          "MICROPHONE AUDIO RECEIVED"
+        );
+
+      }
+
+
+      /*
+        Start playback.
+      */
 
       video.play()
         .then(() => {
 
           console.log(
-            "VIDEO PLAYING"
+            "VIDEO + AUDIO PLAYING"
           );
 
           status.textContent =
@@ -597,21 +759,21 @@ async function handleOffer(
         .catch(error => {
 
           console.error(
-            "Video play failed:",
+            "Playback failed:",
             error
           );
 
           status.textContent =
-            "Video play blocked";
+            "Tap Unmute to hear audio";
 
         });
 
     };
 
 
-  /* =================================
-     ICE
-  ================================= */
+  /* ===================================
+     ICE CANDIDATE
+  =================================== */
 
   peer.onicecandidate =
     event => {
@@ -619,7 +781,9 @@ async function handleOffer(
       if(
         !event.candidate
       ){
+
         return;
+
       }
 
 
@@ -652,9 +816,9 @@ async function handleOffer(
     };
 
 
-  /* =================================
+  /* ===================================
      CONNECTION STATE
-  ================================= */
+  =================================== */
 
   peer.onconnectionstatechange =
     () => {
@@ -682,7 +846,7 @@ async function handleOffer(
       ){
 
         status.textContent =
-          "Connected - waiting for video...";
+          "Connected";
 
       }
 
@@ -711,9 +875,9 @@ async function handleOffer(
     };
 
 
-  /* =================================
+  /* ===================================
      ICE CONNECTION STATE
-  ================================= */
+  =================================== */
 
   peer.oniceconnectionstatechange =
     () => {
@@ -726,9 +890,9 @@ async function handleOffer(
     };
 
 
-  /* =================================
+  /* ===================================
      REMOTE OFFER
-  ================================= */
+  =================================== */
 
   await peer.setRemoteDescription({
 
@@ -741,9 +905,9 @@ async function handleOffer(
   });
 
 
-  /* =================================
-     ANSWER
-  ================================= */
+  /* ===================================
+     CREATE ANSWER
+  =================================== */
 
   const answer =
     await peer.createAnswer();
@@ -754,28 +918,40 @@ async function handleOffer(
   );
 
 
-  socket.send(
-    JSON.stringify({
+  /* ===================================
+     SEND ANSWER
+  =================================== */
 
-      type:
-        "answer",
+  if(
+    socket &&
+    socket.readyState ===
+      WebSocket.OPEN
+  ){
 
-      cameraId:
-        msg.cameraId,
+    socket.send(
+      JSON.stringify({
 
-      viewerId:
-        viewerId,
+        type:
+          "answer",
 
-      sdp:
-        peer.localDescription.sdp
+        cameraId:
+          msg.cameraId,
 
-    })
-  );
+        viewerId:
+          viewerId,
+
+        sdp:
+          peer.localDescription.sdp
+
+      })
+    );
 
 
-  console.log(
-    "Answer sent"
-  );
+    console.log(
+      "Answer sent"
+    );
+
+  }
 
 }
 
@@ -847,12 +1023,28 @@ function removeCamera(
   if(peer){
 
     try{
+
       peer.close();
+
     }catch{}
 
     peers.delete(
       cameraId
     );
+
+  }
+
+
+  const camera =
+    videos.get(
+      cameraId
+    );
+
+
+  if(camera){
+
+    camera.video.srcObject =
+      null;
 
   }
 
@@ -879,12 +1071,16 @@ function removeCamera(
 
 
 /* =====================================
-   INTERNET
+   INTERNET RETURNS
 ===================================== */
 
 window.addEventListener(
   "online",
   () => {
+
+    console.log(
+      "Internet connection restored"
+    );
 
     connect();
 
@@ -902,4 +1098,3 @@ connect();
 
 </body>
 </html>
-
