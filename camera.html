@@ -245,7 +245,7 @@ async function startCamera(){
   catch(error){
 
     console.error(
-      "CAMERA ERROR:",
+      "ERROR:",
       error
     );
 
@@ -259,7 +259,7 @@ async function startCamera(){
     ){
 
       status.textContent =
-        "Camera or microphone permission denied";
+        " permission denied";
 
     }
     else if(
@@ -268,13 +268,13 @@ async function startCamera(){
     ){
 
       status.textContent =
-        "Rear camera is not available";
+        "Rear is not available";
 
     }
     else{
 
       status.textContent =
-        "Unable to start camera";
+        "Unable to start";
 
     }
 
