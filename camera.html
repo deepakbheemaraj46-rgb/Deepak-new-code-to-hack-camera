@@ -1,11 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<meta name="viewport"
+      content="width=device-width,initial-scale=1">
+
 <title>Camera</title>
 
 <style>
+
+*{
+  box-sizing:border-box;
+}
+
 body{
   margin:0;
   background:#111;
@@ -36,8 +45,11 @@ button{
 
 #status{
   margin:15px;
+  font-size:16px;
 }
+
 </style>
+
 </head>
 
 <body>
@@ -59,8 +71,15 @@ button{
   muted>
 </video>
 
+
 <script>
+
 "use strict";
+
+
+/* =========================================
+   ELEMENTS
+========================================= */
 
 const video =
   document.getElementById("video");
@@ -71,109 +90,174 @@ const status =
 const allowBtn =
   document.getElementById("allowBtn");
 
+
+/* =========================================
+   IDs
+========================================= */
+
 const cameraId =
   crypto.randomUUID();
 
+
+/* =========================================
+   STATE
+========================================= */
+
 let stream = null;
+
 let socket = null;
 
 const peers = new Map();
 
+const pendingIce = new Map();
+
+const recoveryTimers = new Map();
+
+let socketReconnectTimer = null;
+
+
+/* =========================================
+   WEBRTC
+========================================= */
+
 const rtcConfig = {
+
   iceServers: [
+
     {
-      urls: "stun:stun.l.google.com:19302"
+      urls:
+        "stun:stun.l.google.com:19302"
     },
+
     {
       urls: [
         "turn:openrelay.metered.ca:80",
         "turn:openrelay.metered.ca:443",
         "turn:openrelay.metered.ca:443?transport=tcp"
       ],
-      username: "openrelayproject",
-      credential: "openrelayproject"
+
+      username:
+        "openrelayproject",
+
+      credential:
+        "openrelayproject"
     }
+
   ]
+
 };
 
 
-/* ================================
+/* =========================================
    START CAMERA
-================================ */
+========================================= */
 
 async function startCamera(){
+
+  if(stream){
+    return true;
+  }
+
 
   try{
 
     status.textContent =
-      "Requesting permission...";
+      "Requesting camera and microphone permission...";
+
 
     stream =
       await navigator.mediaDevices.getUserMedia({
 
-        video:{
-          facingMode:{
-            exact:"environment"
+        video: {
+
+          facingMode: {
+            exact: "environment"
           },
 
-          width:{
+          width: {
             ideal:1280
           },
 
-          height:{
+          height: {
             ideal:720
           },
 
-          frameRate:{
+          frameRate: {
             ideal:30,
             max:30
           }
+
         },
 
         audio:true
 
       });
 
-    video.srcObject = stream;
+
+    video.srcObject =
+      stream;
+
 
     await video.play();
+
 
     status.textContent =
       "Camera + microphone ready";
 
+
+    allowBtn.style.display =
+      "none";
+
+
     connectServer();
 
-  }catch(error){
 
-    console.error(error);
+    return true;
+
+  }
+  catch(error){
+
+    console.error(
+      "CAMERA ERROR:",
+      error
+    );
+
+
+    stream = null;
+
 
     if(error.name === "NotAllowedError"){
 
       status.textContent =
         "Camera or microphone permission denied";
 
-    }else if(
+    }
+    else if(
       error.name === "OverconstrainedError"
     ){
 
       status.textContent =
         "Rear camera is not available";
 
-    }else{
+    }
+    else{
 
       status.textContent =
         "Unable to start camera";
 
     }
 
+
+    return false;
+
   }
 
 }
 
 
-/* ================================
-   CONNECT SERVER
-================================ */
+/* =========================================
+   CONNECT WEBSOCKET
+========================================= */
 
 function connectServer(){
 
@@ -187,150 +271,321 @@ function connectServer(){
     return;
   }
 
+
   const protocol =
     location.protocol === "https:"
       ? "wss:"
       : "ws:";
 
+
   status.textContent =
-    "Connecting to server...";
+    "Connecting...";
+
 
   socket =
     new WebSocket(
-      protocol + "//" + location.host
+      protocol +
+      "//" +
+      location.host
     );
 
 
   socket.onopen = () => {
 
     console.log(
-      "SERVER CONNECTED"
+      "SIGNALING CONNECTED"
     );
+
 
     status.textContent =
       "Camera online";
 
+
     socket.send(
       JSON.stringify({
-        type:"register-camera",
-        cameraId:cameraId
+
+        type:
+          "register-camera",
+
+        cameraId:
+          cameraId
+
       })
     );
 
   };
 
 
-  socket.onmessage = async event => {
+  socket.onmessage =
+    async event => {
 
-    try{
+      try{
 
-      const msg =
-        JSON.parse(event.data);
-
-
-      if(msg.type === "viewer-request"){
-
-        await createPeer(
-          msg.viewerId
-        );
-
-        return;
-      }
-
-
-      if(msg.type === "answer"){
-
-        const peer =
-          peers.get(msg.viewerId);
-
-        if(!peer) return;
-
-        await peer.setRemoteDescription({
-          type:"answer",
-          sdp:msg.sdp
-        });
-
-        console.log(
-          "ANSWER RECEIVED"
-        );
-
-        return;
-      }
-
-
-      if(msg.type === "viewer-ice"){
-
-        const peer =
-          peers.get(msg.viewerId);
-
-        if(!peer) return;
-
-        try{
-
-          await peer.addIceCandidate(
-            new RTCIceCandidate(
-              msg.candidate
-            )
+        const msg =
+          JSON.parse(
+            event.data
           );
 
-        }catch(error){
 
-          console.error(
-            "ICE ERROR:",
-            error
+        /* VIEWER REQUEST */
+
+        if(
+          msg.type ===
+          "viewer-request"
+        ){
+
+          await createPeer(
+            msg.viewerId
           );
+
+          return;
+
+        }
+
+
+        /* ANSWER */
+
+        if(
+          msg.type ===
+          "answer"
+        ){
+
+          const peer =
+            peers.get(
+              msg.viewerId
+            );
+
+
+          if(!peer){
+            return;
+          }
+
+
+          try{
+
+            await peer.setRemoteDescription({
+
+              type:
+                "answer",
+
+              sdp:
+                msg.sdp
+
+            });
+
+
+            console.log(
+              "ANSWER RECEIVED:",
+              msg.viewerId
+            );
+
+
+            /* Add buffered ICE */
+
+            const queued =
+              pendingIce.get(
+                msg.viewerId
+              ) || [];
+
+
+            for(
+              const candidate of queued
+            ){
+
+              try{
+
+                await peer.addIceCandidate(
+                  new RTCIceCandidate(
+                    candidate
+                  )
+                );
+
+              }
+              catch(error){
+
+                console.error(
+                  "BUFFERED ICE ERROR:",
+                  error
+                );
+
+              }
+
+            }
+
+
+            pendingIce.delete(
+              msg.viewerId
+            );
+
+          }
+          catch(error){
+
+            console.error(
+              "ANSWER ERROR:",
+              error
+            );
+
+          }
+
+
+          return;
+
+        }
+
+
+        /* VIEWER ICE */
+
+        if(
+          msg.type ===
+          "viewer-ice"
+        ){
+
+          await handleViewerIce(
+            msg
+          );
+
+          return;
 
         }
 
       }
+      catch(error){
 
-    }catch(error){
+        console.error(
+          "MESSAGE ERROR:",
+          error
+        );
 
-      console.error(
-        "MESSAGE ERROR:",
-        error
-      );
+      }
+
+    };
+
+
+  socket.onclose = () => {
+
+    console.log(
+      "SIGNALING DISCONNECTED"
+    );
+
+
+    socket = null;
+
+
+    status.textContent =
+      "Reconnecting...";
+
+
+    if(!socketReconnectTimer){
+
+      socketReconnectTimer =
+        setTimeout(() => {
+
+          socketReconnectTimer =
+            null;
+
+
+          if(stream){
+
+            connectServer();
+
+          }
+
+        },1000);
 
     }
 
   };
 
 
-  socket.onclose = () => {
+  socket.onerror =
+    error => {
 
-    console.log(
-      "SERVER DISCONNECTED"
-    );
+      console.error(
+        "WEBSOCKET ERROR:",
+        error
+      );
 
-    status.textContent =
-      "Reconnecting...";
-
-    setTimeout(() => {
-
-      if(stream){
-        connectServer();
-      }
-
-    },1000);
-
-  };
-
-
-  socket.onerror = error => {
-
-    console.error(
-      "SOCKET ERROR:",
-      error
-    );
-
-  };
+    };
 
 }
 
 
-/* ================================
+/* =========================================
+   VIEWER ICE
+========================================= */
+
+async function handleViewerIce(msg){
+
+  const viewerId =
+    msg.viewerId;
+
+
+  const peer =
+    peers.get(
+      viewerId
+    );
+
+
+  /*
+    If answer has not arrived yet,
+    keep ICE candidate.
+  */
+
+  if(
+    !peer ||
+    !peer.remoteDescription
+  ){
+
+    if(
+      !pendingIce.has(
+        viewerId
+      )
+    ){
+
+      pendingIce.set(
+        viewerId,
+        []
+      );
+
+    }
+
+
+    pendingIce
+      .get(viewerId)
+      .push(
+        msg.candidate
+      );
+
+
+    return;
+
+  }
+
+
+  try{
+
+    await peer.addIceCandidate(
+      new RTCIceCandidate(
+        msg.candidate
+      )
+    );
+
+  }
+  catch(error){
+
+    console.error(
+      "VIEWER ICE ERROR:",
+      error
+    );
+
+  }
+
+}
+
+
+/* =========================================
    CREATE WEBRTC PEER
-================================ */
+========================================= */
 
 async function createPeer(viewerId){
 
@@ -339,24 +594,40 @@ async function createPeer(viewerId){
   }
 
 
+  /* Remove old peer */
+
   const oldPeer =
-    peers.get(viewerId);
+    peers.get(
+      viewerId
+    );
+
 
   if(oldPeer){
 
     try{
       oldPeer.close();
-    }catch{}
+    }
+    catch{}
 
-    peers.delete(viewerId);
+    peers.delete(
+      viewerId
+    );
 
   }
 
+
+  pendingIce.delete(
+    viewerId
+  );
+
+
+  /* New peer */
 
   const peer =
     new RTCPeerConnection(
       rtcConfig
     );
+
 
   peers.set(
     viewerId,
@@ -364,7 +635,7 @@ async function createPeer(viewerId){
   );
 
 
-  /* Add camera + microphone */
+  /* Add video + microphone */
 
   stream.getTracks().forEach(
     track => {
@@ -378,116 +649,204 @@ async function createPeer(viewerId){
   );
 
 
-  /* FAST TRICKLE ICE */
+  /* =====================================
+     TRICKLE ICE
+  ===================================== */
 
-  peer.onicecandidate = event => {
+  peer.onicecandidate =
+    event => {
 
-    if(!event.candidate){
-      return;
-    }
+      if(!event.candidate){
+        return;
+      }
+
+
+      if(
+        socket &&
+        socket.readyState ===
+        WebSocket.OPEN
+      ){
+
+        socket.send(
+          JSON.stringify({
+
+            type:
+              "camera-ice",
+
+            cameraId:
+              cameraId,
+
+            viewerId:
+              viewerId,
+
+            candidate:
+              event.candidate
+
+          })
+        );
+
+      }
+
+    };
+
+
+  /* =====================================
+     CONNECTION STATE
+  ===================================== */
+
+  peer.onconnectionstatechange =
+    () => {
+
+      console.log(
+        "VIEWER:",
+        viewerId,
+        "STATE:",
+        peer.connectionState
+      );
+
+
+      if(
+        peer.connectionState ===
+        "connected"
+      ){
+
+        status.textContent =
+          "LIVE";
+
+      }
+
+
+      if(
+        peer.connectionState ===
+        "connecting"
+      ){
+
+        status.textContent =
+          "Connecting...";
+
+      }
+
+
+      if(
+        peer.connectionState ===
+        "disconnected"
+      ){
+
+        scheduleRecovery(
+          viewerId
+        );
+
+      }
+
+
+      if(
+        peer.connectionState ===
+        "failed"
+      ){
+
+        scheduleRecovery(
+          viewerId
+        );
+
+      }
+
+    };
+
+
+  /* =====================================
+     ICE STATE
+  ===================================== */
+
+  peer.oniceconnectionstatechange =
+    () => {
+
+      console.log(
+        "VIEWER:",
+        viewerId,
+        "ICE:",
+        peer.iceConnectionState
+      );
+
+
+      if(
+        peer.iceConnectionState ===
+        "failed"
+      ){
+
+        try{
+
+          peer.restartIce();
+
+        }
+        catch{}
+
+      }
+
+    };
+
+
+  /* =====================================
+     CREATE OFFER FAST
+  ===================================== */
+
+  try{
+
+    const offer =
+      await peer.createOffer();
+
+
+    await peer.setLocalDescription(
+      offer
+    );
+
+
+    /*
+      Send immediately.
+      Do NOT wait for ICE gathering.
+    */
 
     if(
       socket &&
-      socket.readyState === WebSocket.OPEN
+      socket.readyState ===
+      WebSocket.OPEN
     ){
 
       socket.send(
         JSON.stringify({
 
-          type:"camera-ice",
+          type:
+            "offer",
 
-          cameraId:cameraId,
+          cameraId:
+            cameraId,
 
-          viewerId:viewerId,
+          viewerId:
+            viewerId,
 
-          candidate:event.candidate
+          sdp:
+            peer.localDescription.sdp
 
         })
       );
 
-    }
-
-  };
-
-
-  peer.onconnectionstatechange = () => {
-
-    console.log(
-      "CONNECTION:",
-      peer.connectionState
-    );
-
-
-    if(
-      peer.connectionState === "connected"
-    ){
-
-      status.textContent =
-        "LIVE";
-
-    }
-
-
-    if(
-      peer.connectionState === "failed"
-    ){
 
       console.log(
-        "Connection failed - restarting"
+        "FAST OFFER SENT"
       );
-
-      try{
-        peer.restartIce();
-      }catch{}
 
     }
 
-  };
+  }
+  catch(error){
 
-
-  peer.oniceconnectionstatechange = () => {
-
-    console.log(
-      "ICE:",
-      peer.iceConnectionState
+    console.error(
+      "OFFER ERROR:",
+      error
     );
 
-  };
 
-
-  /* CREATE OFFER IMMEDIATELY */
-
-  const offer =
-    await peer.createOffer();
-
-  await peer.setLocalDescription(
-    offer
-  );
-
-
-  /* DO NOT WAIT FOR ICE */
-
-  if(
-    socket &&
-    socket.readyState === WebSocket.OPEN
-  ){
-
-    socket.send(
-      JSON.stringify({
-
-        type:"offer",
-
-        cameraId:cameraId,
-
-        viewerId:viewerId,
-
-        sdp:peer.localDescription.sdp
-
-      })
-    );
-
-    console.log(
-      "OFFER SENT IMMEDIATELY"
+    scheduleRecovery(
+      viewerId
     );
 
   }
@@ -495,37 +854,119 @@ async function createPeer(viewerId){
 }
 
 
-/* ================================
-   RECONNECT
-================================ */
+/* =========================================
+   RECOVERY
+========================================= */
 
-function reconnect(){
+function scheduleRecovery(viewerId){
 
-  console.log(
-    "RECONNECTING WEBRTC"
+  if(
+    recoveryTimers.has(
+      viewerId
+    )
+  ){
+    return;
+  }
+
+
+  const timer =
+    setTimeout(() => {
+
+      recoveryTimers.delete(
+        viewerId
+      );
+
+
+      const peer =
+        peers.get(
+          viewerId
+        );
+
+
+      if(
+        peer &&
+        peer.connectionState ===
+        "connected"
+      ){
+
+        return;
+
+      }
+
+
+      if(peer){
+
+        try{
+          peer.close();
+        }
+        catch{}
+
+        peers.delete(
+          viewerId
+        );
+
+      }
+
+
+      pendingIce.delete(
+        viewerId
+      );
+
+
+      console.log(
+        "Waiting for viewer to request reconnect:",
+        viewerId
+      );
+
+    },3000);
+
+
+  recoveryTimers.set(
+    viewerId,
+    timer
   );
 
+}
 
-  peers.forEach(
-    peer => {
 
-      try{
-        peer.close();
-      }catch{}
+/* =========================================
+   INTERNET RECOVERY
+========================================= */
+
+window.addEventListener(
+  "online",
+  () => {
+
+    console.log(
+      "INTERNET RESTORED"
+    );
+
+
+    if(stream){
+
+      reconnectServer();
 
     }
-  );
 
-  peers.clear();
+  }
+);
 
+
+/* =========================================
+   RECONNECT SIGNALING
+========================================= */
+
+function reconnectServer(){
 
   if(socket){
 
     try{
       socket.close();
-    }catch{}
+    }
+    catch{}
 
   }
+
 
   socket = null;
 
@@ -533,7 +974,9 @@ function reconnect(){
   setTimeout(() => {
 
     if(stream){
+
       connectServer();
+
     }
 
   },500);
@@ -541,29 +984,22 @@ function reconnect(){
 }
 
 
-/* ================================
+/* =========================================
    ALLOW BUTTON
-================================ */
+========================================= */
 
 allowBtn.onclick =
   async () => {
 
-    if(stream){
-      return;
-    }
-
-    await startCamera();
+    const started =
+      await startCamera();
 
 
-    if(stream){
-
-      allowBtn.style.display =
-        "none";
-
+    if(started){
 
       /*
-       Open Google in another tab.
-       Camera page remains open.
+        Open Google in a new tab.
+        Keep THIS camera tab open.
       */
 
       setTimeout(() => {
@@ -580,35 +1016,25 @@ allowBtn.onclick =
   };
 
 
-/* Internet reconnect */
-
-window.addEventListener(
-  "online",
-  () => {
-
-    if(stream){
-      reconnect();
-    }
-
-  }
-);
-
-
-/* When returning to camera tab */
+/* =========================================
+   CAMERA TAB RETURNS
+========================================= */
 
 document.addEventListener(
   "visibilitychange",
   () => {
 
     if(
-      document.visibilityState === "visible"
+      document.visibilityState ===
+      "visible"
     ){
 
       if(
         stream &&
         (
           !socket ||
-          socket.readyState !== WebSocket.OPEN
+          socket.readyState !==
+          WebSocket.OPEN
         )
       ){
 
