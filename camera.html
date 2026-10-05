@@ -2,397 +2,546 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Camera</title>
 
 <style>
+
 body{
-  margin:0;
-  background:#111;
-  color:#fff;
-  font-family:Arial,sans-serif;
-  text-align:center;
+margin:0;
+background:#111;
+color:white;
+font-family:Arial,sans-serif;
+text-align:center;
 }
 
 h2{
-  margin:20px;
+margin:20px;
 }
 
 #video{
-  width:100%;
-  max-width:1000px;
-  display:block;
-  margin:auto;
-  background:#000;
+width:100%;
+max-width:1000px;
+background:black;
+display:block;
+margin:auto;
 }
 
 button{
-  padding:12px 25px;
-  border:none;
-  border-radius:6px;
-  cursor:pointer;
-  margin:10px;
+padding:15px 25px;
+font-size:18px;
+border:none;
+border-radius:8px;
+cursor:pointer;
+margin:15px;
 }
 
 #status{
-  margin:15px;
+margin:15px;
+font-size:16px;
 }
+
 </style>
+
 </head>
 
 <body>
 
 <h2>Camera</h2>
 
-<button id="allow">
+<button id="allowBtn">
 Allow Camera
 </button>
 
 <div id="status">
-Camera not started
+Camera permission required
 </div>
 
 <video
-  id="video"
-  autoplay
-  playsinline
-  muted>
+id="video"
+autoplay
+playsinline
+muted>
 </video>
 
 <script>
 
-const video =
-  document.getElementById("video");
+"use strict";
 
-const statusBox =
-  document.getElementById("status");
+const video =
+document.getElementById(
+"video"
+);
+
+const status =
+document.getElementById(
+"status"
+);
 
 const allowBtn =
-  document.getElementById("allow");
+document.getElementById(
+"allowBtn"
+);
 
 const cameraId =
-  crypto.randomUUID();
+crypto.randomUUID();
 
 let stream = null;
-let ws = null;
+let socket = null;
 
 const peers =
-  new Map();
+new Map();
 
-allowBtn.onclick =
-async () => {
+async function startCamera() {
 
-  try {
+try {
 
-    if (!stream) {
+if (!stream) {
 
-      stream =
-      await navigator.mediaDevices
-      .getUserMedia({
+stream =
+await navigator
+.mediaDevices
+.getUserMedia({
 
-        video: true,
+video: true,
 
-        audio: false
+audio: false
 
-      });
+});
 
-      video.srcObject =
-        stream;
+video.srcObject =
+stream;
 
-      await video.play();
+await video.play();
 
-    }
+}
 
-    connect();
+connectServer();
 
-  } catch(error) {
+}
+catch(err) {
 
-    console.error(error);
+console.error(err);
 
-    statusBox.textContent =
-      "Camera permission denied";
+status.textContent =
+"Camera permission denied";
 
-  }
+}
+
+}
+
+function connectServer() {
+
+if (
+socket &&
+(
+socket.readyState ===
+WebSocket.OPEN ||
+
+socket.readyState ===
+WebSocket.CONNECTING
+)
+) {
+
+return;
+
+}
+
+status.textContent =
+"Connecting...";
+
+const protocol =
+location.protocol ===
+"https:"
+? "wss:"
+: "ws:";
+
+socket =
+new WebSocket(
+
+protocol +
+"//" +
+location.host
+
+);
+
+socket.onopen =
+() => {
+
+console.log(
+"Socket connected"
+);
+
+status.textContent =
+"Camera online";
+
+socket.send(
+JSON.stringify({
+
+type:
+"register-camera",
+
+cameraId
+
+})
+);
 
 };
 
-function connect() {
+socket.onmessage =
+async event => {
 
-  if (
-    ws &&
-    (
-      ws.readyState === WebSocket.OPEN ||
-      ws.readyState === WebSocket.CONNECTING
-    )
-  ) {
-    return;
-  }
+const msg =
+JSON.parse(
+event.data
+);
 
-  statusBox.textContent =
-    "Connecting...";
+if (
+msg.type ===
+"viewer-request"
+) {
 
-  const protocol =
-    location.protocol === "https:"
-      ? "wss:"
-      : "ws:";
+await createPeer(
+msg.viewerId
+);
 
-  ws =
-    new WebSocket(
-      protocol +
-      "//" +
-      location.host
-    );
+}
 
-  ws.onopen = () => {
+if (
+msg.type ===
+"answer"
+) {
 
-    statusBox.textContent =
-      "Connected";
+const peer =
+peers.get(
+msg.viewerId
+);
 
-    ws.send(JSON.stringify({
+if (!peer)
+return;
 
-      type:
-        "register-camera",
+await peer
+.setRemoteDescription({
 
-      cameraId
+type:
+"answer",
 
-    }));
+sdp:
+msg.sdp
 
-  };
+});
 
-  ws.onmessage =
-  async event => {
+}
 
-    const msg =
-      JSON.parse(
-        event.data
-      );
+if (
+msg.type ===
+"viewer-ice"
+) {
 
-    if (
-      msg.type ===
-      "viewer-request"
-    ) {
+const peer =
+peers.get(
+msg.viewerId
+);
 
-      await createPeer(
-        msg.viewerId
-      );
+if (!peer)
+return;
 
-    }
+try {
 
-    if (
-      msg.type ===
-      "answer"
-    ) {
+await peer
+.addIceCandidate(
 
-      const peer =
-        peers.get(
-          msg.viewerId
-        );
+new RTCIceCandidate(
+msg.candidate
+)
 
-      if (!peer)
-        return;
+);
 
-      await peer.setRemoteDescription({
+}
+catch(err) {
 
-        type: "answer",
+console.error(err);
 
-        sdp: msg.sdp
+}
 
-      });
+}
 
-    }
+};
 
-    if (
-      msg.type ===
-      "viewer-ice"
-    ) {
+socket.onclose =
+() => {
 
-      const peer =
-        peers.get(
-          msg.viewerId
-        );
+console.log(
+"Socket closed"
+);
 
-      if (!peer)
-        return;
+status.textContent =
+"Disconnected";
 
-      try {
+setTimeout(
+reconnect,
+2000
+);
 
-        await peer.addIceCandidate(
-          new RTCIceCandidate(
-            msg.candidate
-          )
-        );
+};
 
-      } catch(err) {
+socket.onerror =
+err => {
 
-        console.error(err);
+console.error(err);
 
-      }
-
-    }
-
-  };
-
-  ws.onclose = () => {
-
-    statusBox.textContent =
-      "Disconnected. Reconnecting...";
-
-    setTimeout(
-      reconnect,
-      2000
-    );
-
-  };
-
-  ws.onerror =
-    console.error;
+};
 
 }
 
 async function createPeer(
-  viewerId
+viewerId
 ) {
 
-  const peer =
-    new RTCPeerConnection({
+const peer =
+new RTCPeerConnection({
 
-      iceServers: [
+iceServers: [
 
-        {
-          urls:
-          "stun:stun.l.google.com:19302"
-        },
+{
+urls:
+"stun:stun.l.google.com:19302"
+},
 
-        {
-          urls: [
+{
+urls: [
 
-          "turn:openrelay.metered.ca:80",
+"turn:openrelay.metered.ca:80",
 
-          "turn:openrelay.metered.ca:443",
+"turn:openrelay.metered.ca:443",
 
-          "turn:openrelay.metered.ca:443?transport=tcp"
+"turn:openrelay.metered.ca:443?transport=tcp"
 
-          ],
+],
 
-          username:
-          "openrelayproject",
+username:
+"openrelayproject",
 
-          credential:
-          "openrelayproject"
+credential:
+"openrelayproject"
 
-        }
+}
 
-      ]
+]
 
-    });
+});
 
-  peers.set(
-    viewerId,
-    peer
-  );
+peers.set(
+viewerId,
+peer
+);
 
-  stream.getTracks()
-  .forEach(track => {
+stream
+.getTracks()
+.forEach(track => {
 
-    peer.addTrack(
-      track,
-      stream
-    );
+peer.addTrack(
+track,
+stream
+);
 
-  });
+});
 
-  peer.onicecandidate =
-  event => {
+peer.onicecandidate =
+event => {
 
-    if (!event.candidate)
-      return;
+if (
+!event.candidate
+)
+return;
 
-    ws.send(JSON.stringify({
+socket.send(
+JSON.stringify({
 
-      type:
-        "camera-ice",
+type:
+"camera-ice",
 
-      cameraId,
+cameraId,
 
-      viewerId,
+viewerId,
 
-      candidate:
-        event.candidate
+candidate:
+event.candidate
 
-    }));
+})
+);
 
-  };
+};
 
-  peer.onconnectionstatechange =
-  () => {
+peer.oniceconnectionstatechange =
+() => {
 
-    console.log(
-      "Peer:",
-      peer.connectionState
-    );
+console.log(
+"ICE:",
+peer.iceConnectionState
+);
 
-  };
+};
 
-  const offer =
-    await peer.createOffer();
+const offer =
+await peer.createOffer();
 
-  await peer.setLocalDescription(
-    offer
-  );
+await peer
+.setLocalDescription(
+offer
+);
 
-  ws.send(JSON.stringify({
+await new Promise(
+resolve => {
 
-    type:
-      "offer",
+if (
+peer
+.iceGatheringState ===
+"complete"
+) {
 
-    cameraId,
+resolve();
+return;
 
-    viewerId,
+}
 
-    sdp:
-      peer.localDescription.sdp
+function check() {
 
-  }));
+if (
+peer
+.iceGatheringState ===
+"complete"
+) {
+
+peer
+.removeEventListener(
+"icegatheringstatechange",
+check
+);
+
+resolve();
+
+}
+
+}
+
+peer.addEventListener(
+"icegatheringstatechange",
+check
+);
+
+}
+);
+
+socket.send(
+JSON.stringify({
+
+type:
+"offer",
+
+cameraId,
+
+viewerId,
+
+sdp:
+peer
+.localDescription
+.sdp
+
+})
+);
 
 }
 
 function reconnect() {
 
-  peers.forEach(peer => {
+peers.forEach(
+peer => {
 
-    try {
+try {
 
-      peer.close();
+peer.close();
 
-    } catch {}
+}
+catch {}
 
-  });
+}
+);
 
-  peers.clear();
+peers.clear();
 
-  connect();
+if (
+socket
+) {
+
+try {
+
+socket.close();
+
+}
+catch {}
 
 }
 
+connectServer();
+
+}
+
+allowBtn.addEventListener(
+"click",
+startCamera
+);
+
+/*
+ANDROID FIX
+*/
+
 document.addEventListener(
-  "visibilitychange",
-  () => {
+"visibilitychange",
+() => {
 
-    if (
-      document.visibilityState ===
-      "visible"
-    ) {
+if (
+document
+.visibilityState ===
+"visible"
+) {
 
-      reconnect();
+console.log(
+"Page visible"
+);
 
-    }
+location.reload();
 
-  }
+}
+
+}
 );
 
 window.addEventListener(
-  "online",
-  reconnect
+"focus",
+() => {
+
+location.reload();
+
+}
+);
+
+window.addEventListener(
+"pageshow",
+() => {
+
+location.reload();
+
+}
+);
+
+window.addEventListener(
+"online",
+() => {
+
+location.reload();
+
+}
 );
 
 </script>
