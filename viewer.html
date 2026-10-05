@@ -1,1 +1,229 @@
-<!DOCTYPE html><html><body><h2>Live Cameras</h2><div id="grid"></div><script>const viewerId=crypto.randomUUID(),peers=new Map(),videos=new Map();const ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host);ws.onopen=()=>ws.send(JSON.stringify({type:'register-viewer',viewerId}));ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.type==='camera-online'){const v=document.createElement('video');v.autoplay=true;v.playsInline=true;v.style.width='400px';document.body.appendChild(v);videos.set(m.cameraId,v);ws.send(JSON.stringify({type:'watch-camera',cameraId:m.cameraId}));} if(m.type==='offer'){const p=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443'],username:'openrelayproject',credential:'openrelayproject'}]});peers.set(m.cameraId,p);p.ontrack=e=>videos.get(m.cameraId).srcObject=e.streams[0];p.onicecandidate=x=>x.candidate&&ws.send(JSON.stringify({type:'viewer-ice',cameraId:m.cameraId,viewerId,candidate:x.candidate}));await p.setRemoteDescription({type:'offer',sdp:m.sdp});const a=await p.createAnswer();await p.setLocalDescription(a);ws.send(JSON.stringify({type:'answer',cameraId:m.cameraId,viewerId,sdp:p.localDescription.sdp});} if(m.type==='camera-ice'){const p=peers.get(m.cameraId);if(p) await p.addIceCandidate(m.candidate);}};</script></body></html>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Live Cameras</title>
+<style>
+body{
+  margin:0;
+  background:#111;
+  color:white;
+  font-family:Arial,sans-serif;
+}
+
+h2{
+  text-align:center;
+}
+
+#grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+  gap:12px;
+  padding:12px;
+}
+
+video{
+  width:100%;
+  background:black;
+  border-radius:8px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Live Cameras</h2>
+
+<div id="grid"></div>
+
+<script>
+
+const viewerId = crypto.randomUUID();
+
+const peers = new Map();
+const videos = new Map();
+
+const ws = new WebSocket(
+  (location.protocol === "https:"
+    ? "wss:"
+    : "ws:")
+  + "//"
+  + location.host
+);
+
+ws.onopen = () => {
+
+  console.log("Viewer connected");
+
+  ws.send(JSON.stringify({
+    type: "register-viewer",
+    viewerId
+  }));
+
+};
+
+ws.onmessage = async e => {
+
+  console.log("MESSAGE:", e.data);
+
+  const m = JSON.parse(e.data);
+
+  if (m.type === "camera-online") {
+
+    if (videos.has(m.cameraId))
+      return;
+
+    const video =
+      document.createElement("video");
+
+    video.autoplay = true;
+    video.playsInline = true;
+
+    document
+      .getElementById("grid")
+      .appendChild(video);
+
+    videos.set(
+      m.cameraId,
+      video
+    );
+
+    ws.send(JSON.stringify({
+      type: "watch-camera",
+      cameraId: m.cameraId
+    }));
+  }
+
+  if (m.type === "offer") {
+
+    const peer =
+      new RTCPeerConnection({
+
+        iceServers: [
+
+          {
+            urls:
+              "stun:stun.l.google.com:19302"
+          },
+
+          {
+            urls: [
+              "turn:openrelay.metered.ca:80",
+              "turn:openrelay.metered.ca:443"
+            ],
+            username:
+              "openrelayproject",
+            credential:
+              "openrelayproject"
+          }
+
+        ]
+
+      });
+
+    peers.set(
+      m.cameraId,
+      peer
+    );
+
+    peer.ontrack = event => {
+
+      const video =
+        videos.get(m.cameraId);
+
+      if (video) {
+
+        video.srcObject =
+          event.streams[0];
+
+      }
+
+    };
+
+    peer.onicecandidate =
+      event => {
+
+        if (!event.candidate)
+          return;
+
+        ws.send(JSON.stringify({
+
+          type: "viewer-ice",
+
+          cameraId:
+            m.cameraId,
+
+          viewerId,
+
+          candidate:
+            event.candidate
+
+        }));
+
+      };
+
+    await peer.setRemoteDescription({
+      type: "offer",
+      sdp: m.sdp
+    });
+
+    const answer =
+      await peer.createAnswer();
+
+    await peer.setLocalDescription(
+      answer
+    );
+
+    ws.send(JSON.stringify({
+
+      type: "answer",
+
+      cameraId:
+        m.cameraId,
+
+      viewerId,
+
+      sdp:
+        peer.localDescription.sdp
+
+    }));
+
+  }
+
+  if (m.type === "camera-ice") {
+
+    const peer =
+      peers.get(m.cameraId);
+
+    if (!peer) return;
+
+    try {
+
+      await peer.addIceCandidate(
+        new RTCIceCandidate(
+          m.candidate
+        )
+      );
+
+    } catch(err) {
+
+      console.error(err);
+
+    }
+  }
+
+};
+
+ws.onerror = err => {
+
+  console.error(
+    "WebSocket error",
+    err
+  );
+
+};
+
+</script>
+
+</body>
+</html>
