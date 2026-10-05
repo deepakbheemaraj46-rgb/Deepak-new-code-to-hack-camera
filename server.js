@@ -33,8 +33,12 @@ const server = http.createServer((req, res) => {
   }
 
 
+  const filePath =
+    path.join(__dirname, fileName);
+
+
   fs.readFile(
-    path.join(__dirname, fileName),
+    filePath,
     (err, data) => {
 
       if (err) {
@@ -83,6 +87,16 @@ const wss =
    STORAGE
 ========================================= */
 
+/*
+  cameras:
+  cameraId -> {
+    ws
+  }
+
+  viewers:
+  viewerId -> ws
+*/
+
 const cameras =
   new Map();
 
@@ -97,24 +111,29 @@ const viewers =
 function send(ws, data) {
 
   if (
-    ws &&
-    ws.readyState === WebSocket.OPEN
+    !ws ||
+    ws.readyState !== WebSocket.OPEN
   ) {
+    return false;
+  }
 
-    try {
 
-      ws.send(
-        JSON.stringify(data)
-      );
+  try {
 
-    } catch (err) {
+    ws.send(
+      JSON.stringify(data)
+    );
 
-      console.error(
-        "Send error:",
-        err
-      );
+    return true;
 
-    }
+  } catch (err) {
+
+    console.error(
+      "Send error:",
+      err.message
+    );
+
+    return false;
 
   }
 
@@ -133,6 +152,7 @@ function sendToCamera(
   const camera =
     cameras.get(cameraId);
 
+
   if (!camera) {
 
     console.log(
@@ -140,12 +160,12 @@ function sendToCamera(
       cameraId
     );
 
-    return;
+    return false;
 
   }
 
 
-  send(
+  return send(
     camera.ws,
     data
   );
@@ -165,6 +185,7 @@ function sendToViewer(
   const viewer =
     viewers.get(viewerId);
 
+
   if (!viewer) {
 
     console.log(
@@ -172,12 +193,12 @@ function sendToViewer(
       viewerId
     );
 
-    return;
+    return false;
 
   }
 
 
-  send(
+  return send(
     viewer,
     data
   );
@@ -186,7 +207,110 @@ function sendToViewer(
 
 
 /* =========================================
-   CONNECTION
+   SEND ONLINE CAMERAS
+   TO ONE VIEWER
+========================================= */
+
+function sendOnlineCamerasToViewer(
+  viewerId
+) {
+
+  const viewer =
+    viewers.get(viewerId);
+
+
+  if (!viewer) {
+    return;
+  }
+
+
+  for (
+    const cameraId
+    of cameras.keys()
+  ) {
+
+    send(
+      viewer,
+      {
+
+        type:
+          "camera-online",
+
+        cameraId:
+          cameraId
+
+      }
+    );
+
+  }
+
+}
+
+
+/* =========================================
+   BROADCAST CAMERA ONLINE
+========================================= */
+
+function broadcastCameraOnline(
+  cameraId
+) {
+
+  for (
+    const viewerId
+    of viewers.keys()
+  ) {
+
+    sendToViewer(
+      viewerId,
+      {
+
+        type:
+          "camera-online",
+
+        cameraId:
+          cameraId
+
+      }
+    );
+
+  }
+
+}
+
+
+/* =========================================
+   BROADCAST CAMERA OFFLINE
+========================================= */
+
+function broadcastCameraOffline(
+  cameraId
+) {
+
+  for (
+    const viewerId
+    of viewers.keys()
+  ) {
+
+    sendToViewer(
+      viewerId,
+      {
+
+        type:
+          "camera-offline",
+
+        cameraId:
+          cameraId
+
+      }
+    );
+
+  }
+
+}
+
+
+/* =========================================
+   WEBSOCKET CONNECTION
 ========================================= */
 
 wss.on(
@@ -214,6 +338,7 @@ wss.on(
 
         let msg;
 
+
         try {
 
           msg =
@@ -224,7 +349,21 @@ wss.on(
         } catch (err) {
 
           console.error(
-            "Invalid JSON"
+            "Invalid JSON received"
+          );
+
+          return;
+
+        }
+
+
+        if (
+          !msg ||
+          typeof msg.type !== "string"
+        ) {
+
+          console.log(
+            "Invalid message"
           );
 
           return;
@@ -247,11 +386,45 @@ wss.on(
           "register-camera"
         ) {
 
+          if (!msg.cameraId) {
+
+            console.log(
+              "Camera ID missing"
+            );
+
+            return;
+
+          }
+
+
           role =
             "camera";
 
           id =
             msg.cameraId;
+
+
+          /*
+            If the same camera reconnects,
+            replace its old socket.
+          */
+
+          const oldCamera =
+            cameras.get(id);
+
+
+          if (
+            oldCamera &&
+            oldCamera.ws !== ws
+          ) {
+
+            try {
+
+              oldCamera.ws.close();
+
+            } catch {}
+
+          }
 
 
           cameras.set(
@@ -269,29 +442,13 @@ wss.on(
 
 
           /*
-            Tell every connected viewer
-            that this camera is available.
+            Tell all viewers that the
+            camera is online.
           */
 
-          for (
-            const viewerId
-            of viewers.keys()
-          ) {
-
-            sendToViewer(
-              viewerId,
-              {
-
-                type:
-                  "camera-online",
-
-                cameraId:
-                  id
-
-              }
-            );
-
-          }
+          broadcastCameraOnline(
+            id
+          );
 
 
           return;
@@ -308,11 +465,45 @@ wss.on(
           "register-viewer"
         ) {
 
+          if (!msg.viewerId) {
+
+            console.log(
+              "Viewer ID missing"
+            );
+
+            return;
+
+          }
+
+
           role =
             "viewer";
 
           id =
             msg.viewerId;
+
+
+          /*
+            If viewer reconnects,
+            replace old socket.
+          */
+
+          const oldViewer =
+            viewers.get(id);
+
+
+          if (
+            oldViewer &&
+            oldViewer !== ws
+          ) {
+
+            try {
+
+              oldViewer.close();
+
+            } catch {}
+
+          }
 
 
           viewers.set(
@@ -328,29 +519,13 @@ wss.on(
 
 
           /*
-            Send all currently online
-            cameras to this viewer.
+            Send all currently
+            online cameras.
           */
 
-          for (
-            const cameraId
-            of cameras.keys()
-          ) {
-
-            send(
-              ws,
-              {
-
-                type:
-                  "camera-online",
-
-                cameraId:
-                  cameraId
-
-              }
-            );
-
-          }
+          sendOnlineCamerasToViewer(
+            id
+          );
 
 
           return;
@@ -366,6 +541,17 @@ wss.on(
           msg.type ===
           "watch-camera"
         ) {
+
+          if (!msg.cameraId) {
+
+            console.log(
+              "Camera ID missing"
+            );
+
+            return;
+
+          }
+
 
           console.log(
             "WATCH CAMERA:",
@@ -398,7 +584,8 @@ wss.on(
 
 
         /* =================================
-           CAMERA OFFER → VIEWER
+           CAMERA OFFER
+           CAMERA → VIEWER
         ================================= */
 
         if (
@@ -440,7 +627,8 @@ wss.on(
 
 
         /* =================================
-           VIEWER ANSWER → CAMERA
+           VIEWER ANSWER
+           VIEWER → CAMERA
         ================================= */
 
         if (
@@ -482,21 +670,14 @@ wss.on(
 
 
         /* =================================
-           CAMERA ICE → VIEWER
+           CAMERA ICE
+           CAMERA → VIEWER
         ================================= */
 
         if (
           msg.type ===
           "camera-ice"
         ) {
-
-          console.log(
-            "CAMERA ICE:",
-            msg.cameraId,
-            "→",
-            msg.viewerId
-          );
-
 
           sendToViewer(
             msg.viewerId,
@@ -524,21 +705,14 @@ wss.on(
 
 
         /* =================================
-           VIEWER ICE → CAMERA
+           VIEWER ICE
+           VIEWER → CAMERA
         ================================= */
 
         if (
           msg.type ===
           "viewer-ice"
         ) {
-
-          console.log(
-            "VIEWER ICE:",
-            msg.viewerId,
-            "→",
-            msg.cameraId
-          );
-
 
           sendToCamera(
             msg.cameraId,
@@ -565,6 +739,10 @@ wss.on(
         }
 
 
+        /* =================================
+           UNKNOWN MESSAGE
+        ================================= */
+
         console.log(
           "Unknown message:",
           msg.type
@@ -589,7 +767,9 @@ wss.on(
         );
 
 
-        /* CAMERA OFFLINE */
+        /* ================================
+           CAMERA CLOSED
+        ================================= */
 
         if (
           role ===
@@ -601,8 +781,13 @@ wss.on(
 
 
           /*
-            Only remove it if this exact
-            WebSocket is still registered.
+            Important:
+            Only remove the camera if
+            this is still the active socket.
+
+            This prevents an old socket
+            from removing a newly
+            reconnected camera.
           */
 
           if (
@@ -612,43 +797,28 @@ wss.on(
 
             cameras.delete(id);
 
-          }
+
+            console.log(
+              "CAMERA OFFLINE:",
+              id
+            );
 
 
-          console.log(
-            "CAMERA OFFLINE:",
-            id
-          );
-
-
-          /*
-            Tell viewers.
-          */
-
-          for (
-            const viewerId
-            of viewers.keys()
-          ) {
-
-            sendToViewer(
-              viewerId,
-              {
-
-                type:
-                  "camera-offline",
-
-                cameraId:
-                  id
-
-              }
+            broadcastCameraOffline(
+              id
             );
 
           }
 
+
+          return;
+
         }
 
 
-        /* VIEWER OFFLINE */
+        /* ================================
+           VIEWER CLOSED
+        ================================= */
 
         if (
           role ===
@@ -658,6 +828,11 @@ wss.on(
           const viewer =
             viewers.get(id);
 
+
+          /*
+            Only delete if this is
+            still the active viewer socket.
+          */
 
           if (
             viewer === ws
@@ -672,6 +847,9 @@ wss.on(
             "VIEWER OFFLINE:",
             id
           );
+
+
+          return;
 
         }
 
@@ -693,6 +871,23 @@ wss.on(
         );
 
       }
+    );
+
+  }
+);
+
+
+/* =========================================
+   SERVER ERROR
+========================================= */
+
+server.on(
+  "error",
+  err => {
+
+    console.error(
+      "HTTP server error:",
+      err
     );
 
   }
@@ -722,6 +917,10 @@ server.listen(
 
     console.log(
       "Viewer: /viewer"
+    );
+
+    console.log(
+      "Video + Audio WebRTC signaling ready"
     );
 
     console.log(
