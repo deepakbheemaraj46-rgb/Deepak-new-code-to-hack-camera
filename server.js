@@ -1,77 +1,254 @@
 "use strict";
 
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
-const WebSocket = require("ws");
 
-const PORT = process.env.PORT || 10000;
+/* =========================================
+   MODULES
+========================================= */
 
+const http =
+  require("http");
+
+const fs =
+  require("fs");
+
+const path =
+  require("path");
+
+const crypto =
+  require("crypto");
+
+const https =
+  require("https");
+
+const WebSocket =
+  require("ws");
+
+
+/* =========================================
+   PORT
+========================================= */
+
+const PORT =
+  process.env.PORT || 10000;
+
+
+/* =========================================
+   NTFY
+========================================= */
+
+const NTFY_TOPIC =
+  process.env.NTFY_TOPIC || "";
+
+
+/* =========================================
+   NTFY FUNCTION
+========================================= */
+
+function sendNtfy(
+  title,
+  message
+){
+
+  if(!NTFY_TOPIC){
+
+    console.log(
+      "NTFY_TOPIC is not configured"
+    );
+
+    return;
+
+  }
+
+
+  const data =
+    JSON.stringify({
+
+      topic:
+        NTFY_TOPIC,
+
+      title:
+        title,
+
+      message:
+        message,
+
+      priority:
+        "high"
+
+    });
+
+
+  const request =
+    https.request({
+
+      hostname:
+        "ntfy.sh",
+
+      path:
+        "/",
+
+      method:
+        "POST",
+
+      headers: {
+
+        "Content-Type":
+          "application/json",
+
+        "Content-Length":
+          Buffer.byteLength(
+            data
+          )
+
+      }
+
+    },
+    response => {
+
+      console.log(
+        "NTFY STATUS:",
+        response.statusCode
+      );
+
+      response.on(
+        "data",
+        () => {}
+      );
+
+    });
+
+
+  request.on(
+    "error",
+    error => {
+
+      console.error(
+        "NTFY ERROR:",
+        error.message
+      );
+
+    });
+
+
+  request.write(
+    data
+  );
+
+
+  request.end();
+
+}
+
+
+/* =========================================
+   HTTP SERVER
+========================================= */
 
 const server =
-  http.createServer((req,res) => {
+  http.createServer(
+    (req,res) => {
 
-    let file;
-
-    if(req.url === "/"){
-      file = "camera.html";
-    }
-    else if(req.url === "/viewer"){
-      file = "viewer.html";
-    }
-    else{
-      res.writeHead(404);
-      return res.end("Not Found");
-    }
+      let fileName;
 
 
-    const filePath =
-      path.join(__dirname,file);
+      if(
+        req.url === "/"
+      ){
 
+        fileName =
+          "camera.html";
 
-    fs.readFile(
-      filePath,
-      (err,data) => {
+      }
+      else if(
+        req.url === "/viewer"
+      ){
 
-        if(err){
+        fileName =
+          "viewer.html";
 
-          console.error(err);
-
-          res.writeHead(500);
-
-          return res.end(
-            "File Error"
-          );
-
-        }
-
+      }
+      else{
 
         res.writeHead(
-          200,
-          {
-            "Content-Type":
-              "text/html; charset=utf-8",
+          404
+        );
 
-            "Cache-Control":
-              "no-store"
-          }
+        return res.end(
+          "Not Found"
+        );
+
+      }
+
+
+      const filePath =
+        path.join(
+          __dirname,
+          fileName
         );
 
 
-        res.end(data);
+      fs.readFile(
+        filePath,
+        (error,data) => {
 
-      }
-    );
+          if(error){
 
-  });
+            console.error(
+              "FILE ERROR:",
+              error
+            );
 
+
+            res.writeHead(
+              500
+            );
+
+
+            return res.end(
+              "File Error"
+            );
+
+          }
+
+
+          res.writeHead(
+            200,
+            {
+
+              "Content-Type":
+                "text/html; charset=utf-8",
+
+              "Cache-Control":
+                "no-store, no-cache, must-revalidate"
+
+            }
+          );
+
+
+          res.end(
+            data
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+/* =========================================
+   WEBSOCKET
+========================================= */
 
 const wss =
   new WebSocket.Server({
     server
   });
 
+
+/* =========================================
+   STORAGE
+========================================= */
 
 const cameras =
   new Map();
@@ -80,52 +257,83 @@ const viewers =
   new Map();
 
 
-function send(ws,data){
+/* =========================================
+   SEND
+========================================= */
+
+function send(
+  ws,
+  data
+){
 
   if(
     !ws ||
-    ws.readyState !== WebSocket.OPEN
+    ws.readyState !==
+    WebSocket.OPEN
   ){
-    return;
+
+    return false;
+
   }
 
 
   try{
 
     ws.send(
-      JSON.stringify(data)
+      JSON.stringify(
+        data
+      )
     );
 
-  }catch(error){
+
+    return true;
+
+  }
+  catch(error){
 
     console.error(
       "SEND ERROR:",
       error.message
     );
 
+
+    return false;
+
   }
 
 }
 
 
+/* =========================================
+   WEBSOCKET CONNECTION
+========================================= */
+
 wss.on(
   "connection",
   ws => {
 
-    let role = null;
-    let id = crypto.randomUUID();
+    let role =
+      null;
+
+    let id =
+      crypto.randomUUID();
 
 
     console.log(
-      "WebSocket connected"
+      "WEBSOCKET CONNECTED"
     );
 
+
+    /* =====================================
+       MESSAGE
+    ===================================== */
 
     ws.on(
       "message",
       raw => {
 
         let msg;
+
 
         try{
 
@@ -134,24 +342,61 @@ wss.on(
               raw.toString()
             );
 
-        }catch{
+        }
+        catch(error){
+
+          console.error(
+            "INVALID JSON"
+          );
 
           return;
 
         }
 
 
-        /* CAMERA */
+        /* =================================
+           CAMERA REGISTER
+        ================================= */
 
         if(
           msg.type ===
           "register-camera"
         ){
 
-          role = "camera";
+          if(
+            !msg.cameraId
+          ){
+
+            return;
+
+          }
+
+
+          role =
+            "camera";
+
 
           id =
             msg.cameraId;
+
+
+          const oldCamera =
+            cameras.get(
+              id
+            );
+
+
+          if(
+            oldCamera &&
+            oldCamera !== ws
+          ){
+
+            try{
+              oldCamera.close();
+            }
+            catch{}
+
+          }
 
 
           cameras.set(
@@ -166,39 +411,85 @@ wss.on(
           );
 
 
+          /* NTFY */
+
+          sendNtfy(
+            "📷 Camera Online",
+            "Camera is now online and ready."
+          );
+
+
+          /* Tell all viewers */
+
           for(
-            const viewer of viewers.values()
+            const viewer of
+            viewers.values()
           ){
 
             send(
               viewer,
               {
+
                 type:
                   "camera-online",
 
                 cameraId:
                   id
+
               }
             );
 
           }
+
 
           return;
 
         }
 
 
-        /* VIEWER */
+        /* =================================
+           VIEWER REGISTER
+        ================================= */
 
         if(
           msg.type ===
           "register-viewer"
         ){
 
-          role = "viewer";
+          if(
+            !msg.viewerId
+          ){
+
+            return;
+
+          }
+
+
+          role =
+            "viewer";
+
 
           id =
             msg.viewerId;
+
+
+          const oldViewer =
+            viewers.get(
+              id
+            );
+
+
+          if(
+            oldViewer &&
+            oldViewer !== ws
+          ){
+
+            try{
+              oldViewer.close();
+            }
+            catch{}
+
+          }
 
 
           viewers.set(
@@ -213,34 +504,51 @@ wss.on(
           );
 
 
+          /* Send current cameras */
+
           for(
-            const cameraId of cameras.keys()
+            const cameraId of
+            cameras.keys()
           ){
 
             send(
               ws,
               {
+
                 type:
                   "camera-online",
 
                 cameraId:
                   cameraId
+
               }
             );
 
           }
+
 
           return;
 
         }
 
 
-        /* WATCH */
+        /* =================================
+           WATCH CAMERA
+        ================================= */
 
         if(
           msg.type ===
           "watch-camera"
         ){
+
+          if(
+            !msg.cameraId
+          ){
+
+            return;
+
+          }
+
 
           const camera =
             cameras.get(
@@ -248,9 +556,38 @@ wss.on(
             );
 
 
+          if(!camera){
+
+            console.log(
+              "CAMERA NOT FOUND:",
+              msg.cameraId
+            );
+
+            return;
+
+          }
+
+
+          console.log(
+            "VIEWER REQUEST:",
+            id,
+            "→",
+            msg.cameraId
+          );
+
+
+          /* NTFY */
+
+          sendNtfy(
+            "👤 Viewer Connected",
+            "A viewer started watching the camera."
+          );
+
+
           send(
             camera,
             {
+
               type:
                 "viewer-request",
 
@@ -259,18 +596,23 @@ wss.on(
 
               cameraId:
                 msg.cameraId
+
             }
           );
 
+
           return;
 
         }
 
 
-        /* OFFER */
+        /* =================================
+           OFFER
+        ================================= */
 
         if(
-          msg.type === "offer"
+          msg.type ===
+          "offer"
         ){
 
           const viewer =
@@ -284,15 +626,19 @@ wss.on(
             msg
           );
 
+
           return;
 
         }
 
 
-        /* ANSWER */
+        /* =================================
+           ANSWER
+        ================================= */
 
         if(
-          msg.type === "answer"
+          msg.type ===
+          "answer"
         ){
 
           const camera =
@@ -306,15 +652,19 @@ wss.on(
             msg
           );
 
+
           return;
 
         }
 
 
-        /* CAMERA ICE */
+        /* =================================
+           CAMERA ICE
+        ================================= */
 
         if(
-          msg.type === "camera-ice"
+          msg.type ===
+          "camera-ice"
         ){
 
           const viewer =
@@ -328,15 +678,19 @@ wss.on(
             msg
           );
 
+
           return;
 
         }
 
 
-        /* VIEWER ICE */
+        /* =================================
+           VIEWER ICE
+        ================================= */
 
         if(
-          msg.type === "viewer-ice"
+          msg.type ===
+          "viewer-ice"
         ){
 
           const camera =
@@ -349,6 +703,7 @@ wss.on(
             camera,
             msg
           );
+
 
           return;
 
@@ -358,30 +713,74 @@ wss.on(
     );
 
 
+    /* =====================================
+       CLOSE
+    ===================================== */
+
     ws.on(
       "close",
       () => {
 
-        if(role === "camera"){
+        console.log(
+          "WEBSOCKET CLOSED:",
+          role,
+          id
+        );
+
+
+        /* CAMERA CLOSED */
+
+        if(
+          role === "camera"
+        ){
+
+          const camera =
+            cameras.get(
+              id
+            );
+
 
           if(
-            cameras.get(id) === ws
+            camera &&
+            camera === ws
           ){
 
-            cameras.delete(id);
+            cameras.delete(
+              id
+            );
+
+
+            console.log(
+              "CAMERA OFFLINE:",
+              id
+            );
+
+
+            /* NTFY */
+
+            sendNtfy(
+              "🔴 Camera Offline",
+              "The camera connection was closed."
+            );
+
+
+            /* Tell viewers */
 
             for(
-              const viewer of viewers.values()
+              const viewer of
+              viewers.values()
             ){
 
               send(
                 viewer,
                 {
+
                   type:
                     "camera-offline",
 
                   cameraId:
                     id
+
                 }
               );
 
@@ -392,13 +791,32 @@ wss.on(
         }
 
 
-        if(role === "viewer"){
+        /* VIEWER CLOSED */
+
+        if(
+          role === "viewer"
+        ){
+
+          const viewer =
+            viewers.get(
+              id
+            );
+
 
           if(
-            viewers.get(id) === ws
+            viewer &&
+            viewer === ws
           ){
 
-            viewers.delete(id);
+            viewers.delete(
+              id
+            );
+
+
+            console.log(
+              "VIEWER OFFLINE:",
+              id
+            );
 
           }
 
@@ -408,12 +826,16 @@ wss.on(
     );
 
 
+    /* =====================================
+       ERROR
+    ===================================== */
+
     ws.on(
       "error",
       error => {
 
         console.error(
-          "WebSocket error:",
+          "WEBSOCKET ERROR:",
           error.message
         );
 
@@ -424,33 +846,48 @@ wss.on(
 );
 
 
+/* =========================================
+   SERVER START
+========================================= */
+
 server.listen(
   PORT,
   () => {
 
     console.log(
-      "================================"
+      "================================="
     );
 
     console.log(
-      "Server running on port:",
+      "SERVER RUNNING"
+    );
+
+    console.log(
+      "PORT:",
       PORT
     );
 
     console.log(
-      "Camera: /"
+      "CAMERA: /"
     );
 
     console.log(
-      "Viewer: /viewer"
+      "VIEWER: /viewer"
     );
 
     console.log(
-      "FAST WEBRTC SIGNALING READY"
+      "WEBRTC: FAST + AUTO RECOVERY"
     );
 
     console.log(
-      "================================"
+      "NTFY:",
+      NTFY_TOPIC
+        ? "ENABLED"
+        : "NOT CONFIGURED"
+    );
+
+    console.log(
+      "================================="
     );
 
   }
