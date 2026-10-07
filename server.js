@@ -48,23 +48,28 @@ const NTFY_TOPIC =
 function sendNtfy(title, message) {
 
   if (!NTFY_TOPIC) {
-
-    console.log("NTFY_TOPIC is not configured");
-
+    console.log("NTFY_TOPIC is missing");
     return;
   }
+
+  const data = Buffer.from(message, "utf8");
 
   const req = https.request(
     {
       hostname: "ntfy.sh",
-      path: `/${NTFY_TOPIC}`,
+      port: 443,
+      path: "/" + encodeURIComponent(NTFY_TOPIC),
       method: "POST",
+
       headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Length": data.length,
         "Title": title,
         "Priority": "5",
         "Tags": "camera"
       }
     },
+
     res => {
 
       console.log(
@@ -74,40 +79,36 @@ function sendNtfy(title, message) {
 
       let body = "";
 
-      res.on(
-        "data",
-        chunk => {
-          body += chunk.toString();
-        }
-      );
+      res.on("data", chunk => {
+        body += chunk.toString();
+      });
 
-      res.on(
-        "end",
-        () => {
-          console.log(
-            "NTFY RESPONSE:",
-            body
-          );
-        }
-      );
+      res.on("end", () => {
+
+        console.log(
+          "NTFY RESPONSE:",
+          body
+        );
+
+      });
 
     }
   );
 
-  req.on(
-    "error",
-    err => {
-      console.error(
-        "NTFY ERROR:",
-        err.message
-      );
-    }
-  );
+  req.on("error", error => {
 
-  req.write(message);
+    console.error(
+      "NTFY ERROR:",
+      error.message
+    );
+
+  });
+
+  req.write(data);
 
   req.end();
 }
+         
 
 
 /* =========================================
