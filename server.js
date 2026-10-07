@@ -384,7 +384,7 @@ wss.on(
           /* NTFY */
 
           sendNtfy(
-            "📷 Camera Online",
+            "Camera Online",
             "Camera is now online and ready."
           );
 
@@ -549,7 +549,7 @@ wss.on(
           /* NTFY */
 
           sendNtfy(
-            "👤 Viewer Connected",
+            "Viewer Connected",
             "A viewer started watching the camera."
           );
 
@@ -729,7 +729,7 @@ wss.on(
             /* NTFY */
 
             sendNtfy(
-              "🔴 Camera Offline",
+              "Camera Offline",
               "The camera connection was closed."
             );
 
@@ -867,7 +867,7 @@ server.listen(
 
     // TEST NOTIFICATION
     sendNtfy(
-      "✅ Server Started",
+      "Server Started",
       "WebRTC server is online."
     );
 
