@@ -37,106 +37,76 @@ const PORT =
 ========================================= */
 
 const NTFY_TOPIC =
-  process.env.NTFY_TOPIC || "";
+  process.env.NTFY_TOPIC ||
+  "deepak_camera_847392";
 
 
 /* =========================================
    NTFY FUNCTION
 ========================================= */
 
-function sendNtfy(
-  title,
-  message
-){
+function sendNtfy(title, message) {
 
-  if(!NTFY_TOPIC){
+  if (!NTFY_TOPIC) {
 
-    console.log(
-      "NTFY_TOPIC is not configured"
-    );
+    console.log("NTFY_TOPIC is not configured");
 
     return;
-
   }
 
-
-  const data =
-    JSON.stringify({
-
-      topic:
-        NTFY_TOPIC,
-
-      title:
-        title,
-
-      message:
-        message,
-
-      priority:
-        "high"
-
-    });
-
-
-  const request =
-    https.request({
-
-      hostname:
-        "ntfy.sh",
-
-      path:
-        "/",
-
-      method:
-        "POST",
-
+  const req = https.request(
+    {
+      hostname: "ntfy.sh",
+      path: `/${NTFY_TOPIC}`,
+      method: "POST",
       headers: {
-
-        "Content-Type":
-          "application/json",
-
-        "Content-Length":
-          Buffer.byteLength(
-            data
-          )
-
+        "Title": title,
+        "Priority": "5",
+        "Tags": "camera"
       }
-
     },
-    response => {
+    res => {
 
       console.log(
         "NTFY STATUS:",
-        response.statusCode
+        res.statusCode
       );
 
-      response.on(
+      let body = "";
+
+      res.on(
         "data",
-        () => {}
+        chunk => {
+          body += chunk.toString();
+        }
       );
 
-    });
-
-
-  request.on(
-    "error",
-    error => {
-
-      console.error(
-        "NTFY ERROR:",
-        error.message
+      res.on(
+        "end",
+        () => {
+          console.log(
+            "NTFY RESPONSE:",
+            body
+          );
+        }
       );
 
-    });
-
-
-  request.write(
-    data
+    }
   );
 
+  req.on(
+    "error",
+    err => {
+      console.error(
+        "NTFY ERROR:",
+        err.message
+      );
+    }
+  );
 
-  request.end();
+  req.write(message);
 
+  req.end();
 }
 
 
@@ -887,7 +857,18 @@ server.listen(
     );
 
     console.log(
+      "NTFY_TOPIC:",
+      NTFY_TOPIC
+    );
+
+    console.log(
       "================================="
+    );
+
+    // TEST NOTIFICATION
+    sendNtfy(
+      "✅ Server Started",
+      "WebRTC server is online."
     );
 
   }
