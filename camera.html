@@ -1097,32 +1097,46 @@ allowBtn.addEventListener("click", async () => {
    CAMERA TAB RETURNS
 ========================================= */
 
-document.addEventListener(
-  "visibilitychange",
-  () => {
+document.addEventListener("visibilitychange", () => {
 
-    if(
-      document.visibilityState ===
-      "visible"
-    ){
+  if (document.visibilityState === "visible") {
 
-      if(
-        stream &&
-        (
-          !socket ||
-          socket.readyState !==
-          WebSocket.OPEN
-        )
-      ){
+    console.log("Camera page active again");
 
+    if (stream) {
+
+      // Make sure local video is still playing
+      if (video.paused) {
+
+        video.play().catch(err => {
+          console.log("Video resume:", err);
+        });
+
+      }
+
+      // Reconnect WebSocket if it was lost
+      if (
+        !socket ||
+        socket.readyState === WebSocket.CLOSED ||
+        socket.readyState === WebSocket.CLOSING
+      ) {
+
+        console.log("Reconnecting WebSocket...");
         connectServer();
 
       }
 
     }
 
+  } else {
+
+    // IMPORTANT:
+    // Do NOT stop the camera here.
+    console.log("Camera page moved to background");
+
   }
-);
+
+});s
 
 </script>
 
